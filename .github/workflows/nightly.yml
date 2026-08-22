@@ -1,0 +1,76 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Run at midnight UTC
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  nightly-build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: develop  # Build from develop branch
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build native addon
+      run: npm run build
+
+    - name: Run tests
+      run: npm test
+
+    - name: Get version info
+      id: version
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        DATE=$(date +'%Y%m%d')
+        echo "version=$VERSION-nightly.$DATE" >> $GITHUB_OUTPUT
+
+    - name: Package for Linux
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        tar -czf elyxion-linux-x64-nightly-${{ steps.version.outputs.version }}.tar.gz \
+          -C . \
+          bin/ \
+          lib/ \
+          build/ \
+          package.json \
+          README.md \
+          LICENSE
+
+    - name: Package for macOS
+      if: matrix.os == 'macos-latest'
+      run: |
+        tar -czf elyxion-macos-x64-nightly-${{ steps.version.outputs.version }}.tar.gz \
+          -C . \
+          bin/ \
+          lib/ \
+          build/ \
+          package.json \
+          README.md \
+          LICENSE
+
+    - name: Package for Windows
+      if: matrix.os == 'windows-latest'
+      run: |
+        7z a elyxion-windows-x64-nightly-${{ steps.version.outputs.version }}.zip bin/ lib/ build/ package.json README.md LICENSE
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: nightly-${{ matrix.os }}
+        path: |
+          elyxion-*-nightly-*

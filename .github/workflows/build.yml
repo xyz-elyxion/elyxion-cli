@@ -1,0 +1,130 @@
+name: Build Elyxion CLI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: [18.x, 20.x, 22.x]
+        
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build native addon
+      run: npm run build
+
+    - name: Run tests
+      run: npm test
+
+    - name: Test CLI
+      run: |
+        node bin/elyxion --version
+        node bin/elyxion -e "console.log('Hello from Elyxion')"
+        node bin/elyx --help
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      if: matrix.node-version == '20.x'
+      with:
+        name: elyxion-${{ matrix.os }}
+        path: |
+          build/
+          lib/
+          bin/
+          package.json
+
+  build-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build in Docker (ARM64)
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/arm64
+        push: false
+        tags: elyxion:arm64
+        build-args: |
+          NODE_VERSION=20
+
+  build-macos-universal:
+    runs-on: macos-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build for x64
+      run: |
+        npm run build -- --arch=x64
+        mv build/elyxion.node build/elyxion-x64.node
+
+    - name: Build for arm64
+      run: |
+        npm run build -- --arch=arm64
+        mv build/elyxion.node build/elyxion-arm64.node
+
+    - name: Create universal binary
+      run: |
+        lipo -create build/elyxion-x64.node build/elyxion-arm64.node -output build/elyxion.node
+        rm build/elyxion-x64.node build/elyxion-arm64.node
+
+    - name: Upload universal build
+      uses: actions/upload-artifact@v4
+      with:
+        name: elyxion-macos-universal
+        path: build/elyxion.node
+
+  build-windows-x64:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build native addon
+      run: npm run build
+
+    - name: Upload Windows build
+      uses: actions/upload-artifact@v4
+      with:
+        name: elyxion-windows-x64
+        path: build/Release/elyxion.node

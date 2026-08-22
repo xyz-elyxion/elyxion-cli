@@ -1,0 +1,57 @@
+{
+  "name": "elyxion-cli",
+  "version": "1.0.0",
+  "description": "A high-performance JavaScript runtime built on V8 and libuv with custom package manager",
+  "main": "lib/index.js",
+  "bin": {
+    "elyxion": "./bin/elyxion",
+    "elyxion-cli": "./bin/elyxion",
+    "elyx": "./bin/elyx"
+  },
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean",
+    "test": "node test/basic.test.js",
+    "repl": "./bin/elyxion --repl",
+    "start": "./bin/elyxion",
+    "hello": "./bin/elyxion examples/hello.js",
+    "server": "./bin/elyxion examples/server.js",
+    "dev": "./bin/elyxion --repl"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xyz-elyxion/elyxion-cli.git"
+  },
+  "keywords": [
+    "javascript",
+    "runtime",
+    "v8",
+    "libuv",
+    "elyxion",
+    "elyx",
+    "package-manager",
+    "npm"
+  ],
+  "author": "Elyxion Project",
+  "contributors": [],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/xyz-elyxion/elyxion-cli/issues"
+  },
+  "homepage": "https://github.com/xyz-elyxion/elyxion-cli#readme",
+  "gypfile": true,
+  "dependencies": {
+    "node-gyp": "^10.0.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ]
+}

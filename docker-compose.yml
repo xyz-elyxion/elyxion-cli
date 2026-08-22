@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  elyxion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: elyxion-cli:latest
+    container_name: elyxion-cli
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./examples:/app/examples
+      - ./lib:/app/lib
+    environment:
+      - NODE_ENV=development
+    networks:
+      - elyxion-network
+
+  # Optional: Run a test server
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: elyxion-cli:latest
+    container_name: elyxion-server
+    command: elyxion /app/examples/server.js
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./examples:/app/examples
+    networks:
+      - elyxion-network
+
+networks:
+  elyxion-network:
+    driver: bridge
