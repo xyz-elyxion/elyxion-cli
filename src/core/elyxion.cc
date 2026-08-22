@@ -10,17 +10,23 @@
 namespace elyxion {
 
 static uv_loop_t* default_loop = nullptr;
+#ifndef ELYXION_AS_ADDON
 static std::unique_ptr<v8::Platform> platform;
+#endif
 
 void InitPlatform() {
+#ifndef ELYXION_AS_ADDON
   platform = v8::platform::NewDefaultPlatform();
   v8::V8::InitializePlatform(platform.get());
   v8::V8::Initialize();
+#endif
 }
 
 void TearDownPlatform() {
+#ifndef ELYXION_AS_ADDON
   v8::V8::Dispose();
   v8::V8::DisposePlatform();
+#endif
 }
 
 
@@ -33,7 +39,9 @@ int Start(int argc, char* argv[]) {
 }
 
 int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) {
+#ifndef ELYXION_AS_ADDON
   InitPlatform();
+#endif
   
   // Parse command line arguments
   bool run_interactive = false;
