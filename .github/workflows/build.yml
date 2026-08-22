@@ -77,13 +77,11 @@ jobs:
     - name: Install Dependencies
       run: npm install --ignore-scripts
 
-    # Build x64
+    # Build x64 (explicit architecture for cross-compilation)
     - name: Build x64
       run: |
-        cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release
+        cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64
         cmake --build build-x64 --config Release
-        cp build-x64/Release/elyxion.node build/elyxion-x64.node 2>/dev/null || \
-          cp build-x64/elyxion.node build/elyxion-x64.node 2>/dev/null || true
         mkdir -p build
         cp build-x64/Release/elyxion.node build/elyxion-x64.node 2>/dev/null || true
 
