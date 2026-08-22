@@ -13,9 +13,15 @@ A high-performance JavaScript runtime built on V8 and libuv, with a custom packa
 ## Installation
 
 ```bash
-# Build from source
+# Install dependencies
 npm install
-npm run build
+
+# Build with CMake (no node-gyp required!)
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+
+# Or use make
+make build
 
 # Or link globally
 npm link
@@ -303,18 +309,64 @@ console.log(_.chunk([1, 2, 3, 4], 2));
 # Development
 
 ```bash
-# Build the native addon
-npm run build
+# Build with CMake (recommended)
+make build
+
+# Or use cmake directly
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
 
 # Run tests
-npm test
+make test
 
 # Start REPL
-npm run repl
+make repl
 
 # Run examples
-npm run hello
-npm run server
+make hello
+make server
+
+# Debug build
+BUILD_TYPE=Debug make build
+```
+
+## Build System
+
+Elyxion uses **CMake** instead of node-gyp for building native addons. This provides:
+
+- ✅ Cross-platform builds (Linux, macOS, Windows)
+- ✅ Automatic V8 header download
+- ✅ Visual Studio auto-detection on Windows
+- ✅ No dependency on node-gyp
+- ✅ Support for CMake generators (Make, Ninja, Visual Studio, Xcode)
+
+### CMake Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ELYXION_AUTO_DOWNLOAD` | ON | Auto-download Node.js headers |
+| `ELYXION_AS_ADDON` | ON | Build as .node addon (vs standalone) |
+| `NODE_VERSION` | 22.23.2 | Node.js version for V8 headers |
+| `NODE_HEADERS_DIR` | (auto) | Path to V8 headers |
+
+### Examples
+
+```bash
+# Basic build
+cmake -B build
+cmake --build build
+
+# Debug build
+cmake -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+
+# Windows (auto-detects Visual Studio)
+cmake -B build -A x64
+cmake --build build --config Release
+
+# macOS universal binary
+cmake -B build -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+cmake --build build
 ```
 
 ## Project Structure

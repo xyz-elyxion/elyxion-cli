@@ -190,7 +190,9 @@ v8::MaybeLocal<v8::Promise> PromiseResolve(v8::Local<v8::Context> context,
 
 }  // namespace elyxion
 
-// Main entry point
+// Main entry point (only for standalone builds, not for addon builds)
+#ifndef ELYXION_AS_ADDON
 int main(int argc, char* argv[]) {
   return elyxion::Start(argc, argv);
 }
+#endif

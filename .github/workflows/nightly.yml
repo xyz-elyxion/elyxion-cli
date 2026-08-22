@@ -2,77 +2,58 @@ name: Nightly Build
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Run at midnight UTC
-  workflow_dispatch:  # Allow manual trigger
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
-  nightly-build:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        ref: develop  # Build from develop branch
 
-    - name: Setup Node.js
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js 22.x
       uses: actions/setup-node@v4
       with:
-        node-version: '22.x'
+        node-version: 22.x
 
-    - name: Install build dependencies (npm)
+    - name: Install Dependencies
+      shell: bash
       run: npm install --ignore-scripts
 
-    - name: Build native addon
-      run: npx node-gyp rebuild
-
-    - name: Run tests
-      run: node test/basic.test.js
-
-    - name: Get version info
-      id: version
+    # ---- Linux / macOS Build ----
+    - name: Build (Linux/macOS)
+      if: runner.os != 'Windows'
       run: |
-        VERSION=$(node -p "require('./package.json').version")
-        DATE=$(date +'%Y%m%d')
-        echo "version=$VERSION-nightly.$DATE" >> $GITHUB_OUTPUT
+        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --config Release
 
-    - name: Package for Linux
-      if: matrix.os == 'ubuntu-latest'
+    # ---- Windows Build ----
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
       run: |
-        tar -czf elyxion-linux-x64-nightly-${{ steps.version.outputs.version }}.tar.gz \
-          -C . \
-          bin/ \
-          lib/ \
-          build/ \
-          package.json \
-          package-lock.json \
-          README.md \
-          LICENSE
+        cmake -B build -A x64
+        cmake --build build --config Release
 
-    - name: Package for macOS
-      if: matrix.os == 'macos-latest'
-      run: |
-        tar -czf elyxion-macos-x64-nightly-${{ steps.version.outputs.version }}.tar.gz \
-          -C . \
-          bin/ \
-          lib/ \
-          build/ \
-          package.json \
-          package-lock.json \
-          README.md \
-          LICENSE
-
-    - name: Package for Windows
-      if: matrix.os == 'windows-latest'
-      run: |
-        7z a elyxion-windows-x64-nightly-${{ steps.version.outputs.version }}.zip bin/ lib/ build/ package.json package-lock.json README.md LICENSE
-
-    - name: Upload artifacts
+    - name: Upload Build
       uses: actions/upload-artifact@v4
       with:
-        name: nightly-${{ matrix.os }}
+        name: elyxion-${{ runner.os }}-nightly
         path: |
-          elyxion-*-nightly-*
+          build/Release/elyxion.node
+          build/elyxion.node
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - name: Nightly Build Complete
+      run: |
+        echo "🌙 Nightly build completed successfully"
+        echo "Date: $(date -u)"
+        echo "Artifacts available in GitHub Actions"

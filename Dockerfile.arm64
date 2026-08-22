@@ -1,0 +1,36 @@
+# =============================================================================
+# Elyxion CLI - ARM64 Docker Build
+# Uses QEMU for cross-compilation
+# =============================================================================
+
+FROM --platform=linux/arm64 node:22-slim
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    cmake \
+    g++ \
+    make \
+    curl \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy source files
+COPY CMakeLists.txt ./
+COPY src/ ./src/
+COPY lib/ ./lib/
+COPY bin/ ./bin/
+COPY package.json package-lock.json ./
+
+# Install dependencies
+RUN npm install --ignore-scripts
+
+# Build with CMake
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release
+
+# Verify build
+RUN ls -la build/Release/ 2>/dev/null || ls -la build/
+
+CMD ["echo", "ARM64 build complete"]

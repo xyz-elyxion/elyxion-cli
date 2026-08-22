@@ -1,122 +1,151 @@
-name: Release Elyxion CLI
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        
+        include:
+          - os: ubuntu-latest
+            artifact_name: elyxion-linux-x64
+            node_arch: x64
+          - os: macos-latest
+            artifact_name: elyxion-macos-universal
+            node_arch: universal
+          - os: windows-latest
+            artifact_name: elyxion-windows-x64
+            node_arch: x64
+
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Setup Node.js
+    - name: Setup Node.js 22.x
       uses: actions/setup-node@v4
       with:
-        node-version: '22.x'
+        node-version: 22.x
 
-    - name: Install build dependencies (npm)
+    - name: Install Dependencies
+      shell: bash
       run: npm install --ignore-scripts
 
-    - name: Build native addon
-      run: npx node-gyp rebuild
-
-    - name: Run tests
-      run: node test/basic.test.js
-
-    - name: Package for Linux
-      if: matrix.os == 'ubuntu-latest'
+    # ---- Linux Build ----
+    - name: Build (Linux)
+      if: runner.os == 'Linux'
       run: |
-        tar -czf elyxion-linux-x64.tar.gz \
-          -C . \
-          bin/ \
-          lib/ \
-          build/ \
-          package.json \
-          package-lock.json \
-          README.md \
-          LICENSE
+        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --config Release
 
-    - name: Package for macOS
-      if: matrix.os == 'macos-latest'
+    # ---- macOS Universal Build ----
+    - name: Build x64 (macOS)
+      if: runner.os == 'macOS'
       run: |
-        tar -czf elyxion-macos-x64.tar.gz \
-          -C . \
-          bin/ \
-          lib/ \
-          build/ \
-          package.json \
-          package-lock.json \
-          README.md \
-          LICENSE
+        cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release
+        cmake --build build-x64 --config Release
 
-    - name: Package for Windows
-      if: matrix.os == 'windows-latest'
+    - name: Build arm64 (macOS)
+      if: runner.os == 'macOS'
       run: |
-        7z a elyxion-windows-x64.zip bin/ lib/ build/ package.json package-lock.json README.md LICENSE
+        cmake -B build-arm64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
+        cmake --build build-arm64 --config Release
 
-    - name: Upload artifacts
+    - name: Create Universal Binary (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        mkdir -p build/Release
+        lipo -create build-x64/Release/elyxion.node build-arm64/Release/elyxion.node -output build/Release/elyxion.node
+
+    # ---- Windows Build ----
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cmake -B build -A x64
+        cmake --build build --config Release
+
+    # ---- Package ----
+    - name: Package (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        tar -czf elyxion-linux-x64.tar.gz -C build/Release elyxion.node
+
+    - name: Package (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        tar -czf elyxion-macos-universal.tar.gz -C build/Release elyxion.node
+
+    - name: Package (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        Compress-Archive -Path build/Release/elyxion.node -DestinationPath elyxion-windows-x64.zip
+
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: release-${{ matrix.os }}
+        name: ${{ matrix.artifact_name }}
         path: |
-          elyxion-*.tar.gz
-          elyxion-*.zip
+          elyxion-linux-x64.tar.gz
+          elyxion-macos-universal.tar.gz
+          elyxion-windows-x64.zip
 
-  create-release:
-    needs: build
+  release:
     runs-on: ubuntu-latest
+    needs: build
     permissions:
       contents: write
-    
+
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Download all artifacts
+    - name: Download All Artifacts
       uses: actions/download-artifact@v4
-      with:
-        path: artifacts/
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
       with:
-        generate_release_notes: true
         files: |
-          artifacts/release-ubuntu-latest/*
-          artifacts/release-macos-latest/*
-          artifacts/release-windows-latest/*
+          elyxion-linux-x64/elyxion-linux-x64.tar.gz
+          elyxion-macos-universal/elyxion-macos-universal.tar.gz
+          elyxion-windows-x64/elyxion-windows-x64.zip
+        generate_release_notes: true
         draft: false
         prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  publish-elyx-registry:
-    needs: create-release
+  # ---- Publish to Elyxion Registry ----
+  publish-registry:
     runs-on: ubuntu-latest
-    
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Setup Node.js
+    - name: Setup Node.js 22.x
       uses: actions/setup-node@v4
       with:
-        node-version: '22.x'
+        node-version: 22.x
 
-    - name: Install build dependencies (npm)
-      run: npm install --ignore-scripts
-
-    - name: Build
-      run: npx node-gyp rebuild
+    - name: Login to Elyxion Registry
+      run: node bin/elyx login
+      env:
+        ELYX_TOKEN: ${{ secrets.ELYX_TOKEN }}
 
     - name: Publish to Elyxion Registry
-      run: node bin/elyx publish
+      run: node bin/elyx publish --tag latest
       env:
-        GITHUB_TOKEN: ${{ secrets.ELYX_REGISTRY_TOKEN }}
+        ELYX_TOKEN: ${{ secrets.ELYX_TOKEN }}

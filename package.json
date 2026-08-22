@@ -9,8 +9,9 @@
     "elyx": "./bin/elyx"
   },
   "scripts": {
-    "build": "node-gyp rebuild",
-    "clean": "node-gyp clean",
+    "build": "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release",
+    "build:debug": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --config Debug",
+    "clean": "rm -rf build/ CMakeFiles/ CMakeCache.txt cmake_install.cmake",
     "test": "node test/basic.test.js",
     "repl": "./bin/elyxion --repl",
     "start": "./bin/elyxion",
@@ -39,10 +40,7 @@
     "url": "https://github.com/xyz-elyxion/elyxion-cli/issues"
   },
   "homepage": "https://github.com/xyz-elyxion/elyxion-cli#readme",
-  "gypfile": true,
-  "dependencies": {
-    "node-gyp": "^10.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {},
   "engines": {
     "node": ">=18.0.0"
