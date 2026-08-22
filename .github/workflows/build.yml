@@ -98,6 +98,7 @@ jobs:
     # Create universal binary
     - name: Create Universal Binary
       run: |
+        mkdir -p build/Release
         lipo -create build/elyxion-x64.node build/elyxion-arm64.node -output build/Release/elyxion.node
         lipo -info build/Release/elyxion.node
 
