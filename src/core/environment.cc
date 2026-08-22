@@ -248,7 +248,7 @@ v8::MaybeLocal<v8::Value> Environment::ExecuteString(
   
   v8::TryCatch try_catch(isolate_);
   
-  v8::ScriptOrigin origin(filename);
+  v8::ScriptOrigin origin(isolate_, filename);
   v8::Local<v8::Script> script;
   
   if (!v8::Script::Compile(context(), source, &origin).ToLocal(&script)) {
