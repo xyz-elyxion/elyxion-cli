@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node-version: [18.x, 20.x, 22.x]
+        node-version: [20.x, 22.x]
         
     steps:
     - name: Checkout repository
@@ -23,14 +23,14 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
 
-    - name: Install dependencies
-      run: npm ci
+    - name: Install dependencies using elyx
+      run: node bin/elyx install
 
     - name: Build native addon
-      run: npm run build
+      run: node bin/elyxion --eval "require('child_process').execSync('node-gyp rebuild', {stdio: 'inherit'})"
 
     - name: Run tests
-      run: npm test
+      run: node bin/elyxion test/basic.test.js
 
     - name: Test CLI
       run: |
@@ -40,7 +40,7 @@ jobs:
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
-      if: matrix.node-version == '20.x'
+      if: matrix.node-version == '22.x'
       with:
         name: elyxion-${{ matrix.os }}
         path: |
@@ -69,7 +69,7 @@ jobs:
         push: false
         tags: elyxion:arm64
         build-args: |
-          NODE_VERSION=20
+          NODE_VERSION=22
 
   build-macos-universal:
     runs-on: macos-latest
@@ -80,31 +80,31 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20.x'
+        node-version: '22.x'
 
-    - name: Install dependencies
-      run: npm ci
+    - name: Install dependencies using elyx
+      run: node bin/elyx install
 
     - name: Build for x64
       run: |
-        npm run build -- --arch=x64
-        mv build/elyxion.node build/elyxion-x64.node
+        node-gyp rebuild --arch=x64
+        mv build/Release/elyxion.node build/elyxion-x64.node
 
     - name: Build for arm64
       run: |
-        npm run build -- --arch=arm64
-        mv build/elyxion.node build/elyxion-arm64.node
+        node-gyp rebuild --arch=arm64
+        mv build/Release/elyxion.node build/elyxion-arm64.node
 
     - name: Create universal binary
       run: |
-        lipo -create build/elyxion-x64.node build/elyxion-arm64.node -output build/elyxion.node
+        lipo -create build/elyxion-x64.node build/elyxion-arm64.node -output build/Release/elyxion.node
         rm build/elyxion-x64.node build/elyxion-arm64.node
 
     - name: Upload universal build
       uses: actions/upload-artifact@v4
       with:
         name: elyxion-macos-universal
-        path: build/elyxion.node
+        path: build/Release/elyxion.node
 
   build-windows-x64:
     runs-on: windows-latest
@@ -115,13 +115,13 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20.x'
+        node-version: '22.x'
 
-    - name: Install dependencies
-      run: npm ci
+    - name: Install dependencies using elyx
+      run: node bin/elyx install
 
     - name: Build native addon
-      run: npm run build
+      run: node-gyp rebuild
 
     - name: Upload Windows build
       uses: actions/upload-artifact@v4

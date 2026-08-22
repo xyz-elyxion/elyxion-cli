@@ -1,4 +1,4 @@
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -10,22 +10,26 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci
+# Copy elyx package manager
+COPY bin/ bin/
+COPY lib/pkg/ lib/pkg/
+
+# Install dependencies using elyx
+RUN node bin/elyx install
 
 # Copy source code
 COPY . .
 
 # Build native addon
-RUN npm run build
+RUN node-gyp rebuild
 
 # Run tests
-RUN npm test
+RUN node bin/elyxion test/basic.test.js
 
 # Production stage
-FROM node:20-slim AS production
+FROM node:22-slim AS production
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -39,6 +43,7 @@ COPY --from=builder /app/build ./build
 COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/bin ./bin
 COPY --from=builder /app/package.json ./
+COPY --from=builder /app/package-lock.json ./
 
 # Make binaries executable
 RUN chmod +x bin/*

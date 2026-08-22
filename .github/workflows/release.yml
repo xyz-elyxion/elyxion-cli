@@ -19,17 +19,16 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20.x'
-        registry-url: 'https://registry.npmjs.org'
+        node-version: '22.x'
 
-    - name: Install dependencies
-      run: npm ci
+    - name: Install dependencies using elyx
+      run: node bin/elyx install
 
     - name: Build native addon
-      run: npm run build
+      run: node-gyp rebuild
 
     - name: Run tests
-      run: npm test
+      run: node bin/elyxion test/basic.test.js
 
     - name: Package for Linux
       if: matrix.os == 'ubuntu-latest'
@@ -40,6 +39,7 @@ jobs:
           lib/ \
           build/ \
           package.json \
+          package-lock.json \
           README.md \
           LICENSE
 
@@ -52,13 +52,14 @@ jobs:
           lib/ \
           build/ \
           package.json \
+          package-lock.json \
           README.md \
           LICENSE
 
     - name: Package for Windows
       if: matrix.os == 'windows-latest'
       run: |
-        7z a elyxion-windows-x64.zip bin/ lib/ build/ package.json README.md LICENSE
+        7z a elyxion-windows-x64.zip bin/ lib/ build/ package.json package-lock.json README.md LICENSE
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -96,31 +97,6 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  publish-npm:
-    needs: create-release
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20.x'
-        registry-url: 'https://registry.npmjs.org'
-
-    - name: Install dependencies
-      run: npm ci
-
-    - name: Build
-      run: npm run build
-
-    - name: Publish to npm
-      run: npm publish
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
   publish-elyx-registry:
     needs: create-release
     runs-on: ubuntu-latest
@@ -132,16 +108,16 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20.x'
+        node-version: '22.x'
 
-    - name: Install dependencies
-      run: npm ci
+    - name: Install dependencies using elyx
+      run: node bin/elyx install
 
     - name: Build
-      run: npm run build
+      run: node-gyp rebuild
+
+    - name: Login to Elyxion Registry
+      run: node bin/elyx login --token ${{ secrets.ELYX_REGISTRY_TOKEN }}
 
     - name: Publish to Elyxion Registry
-      run: |
-        node bin/elyx publish
-      env:
-        GITHUB_TOKEN: ${{ secrets.ELYX_REGISTRY_TOKEN }}
+      run: node bin/elyx publish
