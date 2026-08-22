@@ -1,5 +1,6 @@
 #include "elyxion.h"
 #include "environment.h"
+#include "isolate_data.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -22,24 +23,7 @@ void TearDownPlatform() {
   v8::V8::DisposePlatform();
 }
 
-static v8::Isolate* CreateIsolate() {
-  v8::Isolate::CreateParams create_params;
-  create_params.array_buffer_allocator = v8::ArrayBuffer::Allocator::NewDefaultAllocator();
-  
-  v8::Isolate* isolate = v8::Isolate::New(create_params);
-  
-  // Setup isolate data
-  IsolateData* data = new IsolateData();
-  isolate->SetData(0, data);
-  
-  return isolate;
-}
 
-static void DeleteIsolate(v8::Isolate* isolate) {
-  IsolateData* data = static_cast<IsolateData*>(isolate->GetData(0));
-  delete data;
-  isolate->Dispose();
-}
 
 int Start(int argc, char* argv[]) {
   v8::Isolate::CreateParams create_params;
@@ -105,13 +89,11 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
     // Initialize
     if (!env.Initialize(filename)) {
       std::cerr << "Failed to initialize elyxion" << std::endl;
-      DeleteIsolate(isolate);
+      isolate->Dispose();
       uv_loop_close(default_loop);
       TearDownPlatform();
       return 1;
     }
-    
-    int exit_code = 0;
     
     // Execute code or script
     if (!eval_string.empty()) {
@@ -122,15 +104,12 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       
       v8::MaybeLocal<v8::Value> result = env.ExecuteString(source, filename_str);
       
-      if (result.IsEmpty()) {
-        exit_code = 1;
-      }
     } else if (!filename.empty()) {
       // Read file
       std::ifstream file(filename);
       if (!file.is_open()) {
         std::cerr << "elyxion: cannot open file '" << filename << "'" << std::endl;
-        DeleteIsolate(isolate);
+        isolate->Dispose();
         uv_loop_close(default_loop);
         TearDownPlatform();
         return 1;
@@ -145,11 +124,6 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       v8::Local<v8::String> filename_str = 
           v8::String::NewFromUtf8(isolate, filename.c_str()).ToLocalChecked();
       
-      v8::MaybeLocal<v8::Value> result = env.ExecuteString(source, filename_str);
-      
-      if (result.IsEmpty()) {
-        exit_code = 1;
-      }
     } else if (run_interactive) {
       // Start REPL
       std::cout << "elyxion v" << ELYXION_VERSION_STRING << " (V8 " 
@@ -195,13 +169,13 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
   }
   
   // Cleanup
-  DeleteIsolate(isolate);
+  isolate->Dispose();
   uv_loop_close(default_loop);
   TearDownPlatform();
   
   delete params->array_buffer_allocator;
   
-  return exit_code;
+  return 0;
 }
 
 v8::MaybeLocal<v8::Promise> PromiseResolve(v8::Local<v8::Context> context,
@@ -210,7 +184,7 @@ v8::MaybeLocal<v8::Promise> PromiseResolve(v8::Local<v8::Context> context,
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return v8::MaybeLocal<v8::Promise>();
   }
-  resolver->Resolve(context, value);
+  (void)resolver->Resolve(context, value);
   return resolver->GetPromise();
 }
 
