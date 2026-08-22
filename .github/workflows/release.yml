@@ -50,7 +50,7 @@ jobs:
     - name: Build x64 (macOS)
       if: runner.os == 'macOS'
       run: |
-        cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release
+        cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64
         cmake --build build-x64 --config Release
 
     - name: Build arm64 (macOS)
@@ -62,8 +62,10 @@ jobs:
     - name: Create Universal Binary (macOS)
       if: runner.os == 'macOS'
       run: |
-        mkdir -p build/Release
-        lipo -create build-x64/Release/elyxion.node build-arm64/Release/elyxion.node -output build/Release/elyxion.node
+        mkdir -p build-x64-staging build-arm64-staging build/Release
+        find build-x64 -name "elyxion.node" -exec cp {} build-x64-staging/elyxion.node \;
+        find build-arm64 -name "elyxion.node" -exec cp {} build-arm64-staging/elyxion.node \;
+        lipo -create build-x64-staging/elyxion.node build-arm64-staging/elyxion.node -output build/Release/elyxion.node
 
     # ---- Windows Build ----
     - name: Build (Windows)
@@ -88,14 +90,26 @@ jobs:
       run: |
         Compress-Archive -Path build/Release/elyxion.node -DestinationPath elyxion-windows-x64.zip
 
-    - name: Upload Artifact
+    - name: Upload Artifact (Linux)
+      if: runner.os == 'Linux'
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
-        path: |
-          elyxion-linux-x64.tar.gz
-          elyxion-macos-universal.tar.gz
-          elyxion-windows-x64.zip
+        path: elyxion-linux-x64.tar.gz
+
+    - name: Upload Artifact (macOS)
+      if: runner.os == 'macOS'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: elyxion-macos-universal.tar.gz
+
+    - name: Upload Artifact (Windows)
+      if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: elyxion-windows-x64.zip
 
   release:
     runs-on: ubuntu-latest
