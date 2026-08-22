@@ -17,14 +17,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: elyxion-linux-x64
-            node_arch: x64
+            dist_name: elyxion-linux-x64
           - os: macos-latest
-            artifact_name: elyxion-macos-universal
-            node_arch: universal
+            dist_name: elyxion-macos-universal
           - os: windows-latest
-            artifact_name: elyxion-windows-x64
-            node_arch: x64
+            dist_name: elyxion-windows-x64
 
     steps:
     - name: Checkout
@@ -75,41 +72,53 @@ jobs:
         cmake --build build --config Release
 
     # ---- Package ----
+    - name: Assemble Distribution
+      shell: bash
+      run: |
+        DIST=${{ matrix.dist_name }}
+        mkdir -p "$DIST"/bin "$DIST"/lib "$DIST"/build/Release
+        cp -r bin/* "$DIST"/bin/
+        cp -r lib/* "$DIST"/lib/
+        cp package.json README.md "$DIST"/
+        # Copy the native addon
+        find build build-x64 build-arm64 -name "elyxion.node" -exec cp {} "$DIST"/build/Release/ \; 2>/dev/null || true
+        cp build/Release/elyxion.node "$DIST"/build/Release/ 2>/dev/null || true
+
     - name: Package (Linux)
       if: runner.os == 'Linux'
       run: |
-        tar -czf elyxion-linux-x64.tar.gz -C build/Release elyxion.node
+        tar -czf ${{ matrix.dist_name }}.tar.gz ${{ matrix.dist_name }}
 
     - name: Package (macOS)
       if: runner.os == 'macOS'
       run: |
-        tar -czf elyxion-macos-universal.tar.gz -C build/Release elyxion.node
+        tar -czf ${{ matrix.dist_name }}.tar.gz ${{ matrix.dist_name }}
 
     - name: Package (Windows)
       if: runner.os == 'Windows'
       run: |
-        Compress-Archive -Path build/Release/elyxion.node -DestinationPath elyxion-windows-x64.zip
+        Compress-Archive -Path ${{ matrix.dist_name }} -DestinationPath ${{ matrix.dist_name }}.zip
 
     - name: Upload Artifact (Linux)
       if: runner.os == 'Linux'
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.artifact_name }}
-        path: elyxion-linux-x64.tar.gz
+        name: ${{ matrix.dist_name }}
+        path: ${{ matrix.dist_name }}.tar.gz
 
     - name: Upload Artifact (macOS)
       if: runner.os == 'macOS'
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.artifact_name }}
-        path: elyxion-macos-universal.tar.gz
+        name: ${{ matrix.dist_name }}
+        path: ${{ matrix.dist_name }}.tar.gz
 
     - name: Upload Artifact (Windows)
       if: runner.os == 'Windows'
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.artifact_name }}
-        path: elyxion-windows-x64.zip
+        name: ${{ matrix.dist_name }}
+        path: ${{ matrix.dist_name }}.zip
 
   release:
     runs-on: ubuntu-latest
@@ -134,6 +143,7 @@ jobs:
         generate_release_notes: true
         draft: false
         prerelease: false
+        fail_on_unmatched_files: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
