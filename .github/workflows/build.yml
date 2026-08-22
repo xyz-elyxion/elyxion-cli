@@ -86,17 +86,18 @@ jobs:
     - name: Build for x64
       run: |
         npx node-gyp rebuild --arch=x64
-        mv build/Release/elyxion.node build/elyxion-x64.node
+        cp build/Release/elyxion.node build/elyxion-x64.node
 
     - name: Build for arm64
       run: |
         npx node-gyp rebuild --arch=arm64
-        mv build/Release/elyxion.node build/elyxion-arm64.node
+        cp build/Release/elyxion.node build/elyxion-arm64.node
 
     - name: Create universal binary
       run: |
         lipo -create build/elyxion-x64.node build/elyxion-arm64.node -output build/Release/elyxion.node
         rm build/elyxion-x64.node build/elyxion-arm64.node
+        lipo -info build/Release/elyxion.node
 
     - name: Upload universal build
       uses: actions/upload-artifact@v4
