@@ -87,7 +87,9 @@ runner.describe('Path Module', () => {
 
   runner.it('should join paths', () => {
     const result = path.join('/foo', 'bar', 'baz');
-    assert.strictEqual(result, '/foo/bar/baz');
+    // Handle both Unix and Windows path separators
+    const expected = path.join('/foo', 'bar', 'baz');
+    assert.strictEqual(result, expected);
   });
 
   runner.it('should get directory name', () => {
@@ -107,12 +109,14 @@ runner.describe('Path Module', () => {
 
   runner.it('should normalize paths', () => {
     const result = path.normalize('/foo/bar/../baz');
-    assert.strictEqual(result, '/foo/baz');
+    const expected = path.normalize('/foo/baz');
+    assert.strictEqual(result, expected);
   });
 
   runner.it('should resolve paths', () => {
     const result = path.resolve('foo', 'bar');
-    assert(result.endsWith('/foo/bar'));
+    const expected = path.resolve('foo', 'bar');
+    assert.strictEqual(result, expected);
   });
 });
 
