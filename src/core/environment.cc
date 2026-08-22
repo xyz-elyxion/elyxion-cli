@@ -1,4 +1,5 @@
 #include "environment.h"
+#include "elyxion.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -44,7 +45,7 @@ bool Environment::Initialize(const std::string& main_script) {
       }));
 
   v8::Local<v8::Context> context = v8::Context::New(isolate_, nullptr, global_template);
-  context_.Reset(context);
+  context_.Reset(isolate_, context);
 
   // Setup globals
   v8::Context::Scope context_scope(context);
@@ -120,8 +121,9 @@ void Environment::SetupProcessObject() {
   process->Set(context(),
       v8::String::NewFromUtf8(isolate_, "cwd").ToLocalChecked(),
       v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
-        char cwd[PATH_MAX];
-        if (uv_cwd(cwd, sizeof(cwd)) == 0) {
+        char cwd[4096];
+        size_t size = sizeof(cwd);
+        if (uv_cwd(cwd, &size) == 0) {
           info.GetReturnValue().Set(
               v8::String::NewFromUtf8(info.GetIsolate(), cwd).ToLocalChecked());
         }
@@ -151,7 +153,7 @@ void Environment::SetupProcessObject() {
   }
 #endif
   
-  process_.Reset(process);
+  process_.Reset(isolate_, process);
   
   // Add to global
   context()->Global()->Set(context(),
@@ -211,42 +213,19 @@ void Environment::SetupGlobalObject() {
   context()->Global()->Set(context(),
       v8::String::NewFromUtf8(isolate_, "console").ToLocalChecked(),
       console).Check();
-  
-  // Add require function (will be implemented in JS)
-  v8::Local<v8::FunctionTemplate> require_template = v8::FunctionTemplate::New(isolate_,
-      [](const v8::FunctionCallbackInfo<v8::Value>& info) {
-        // Placeholder for require
-        v8::Isolate* isolate = info.GetIsolate();
-        v8::Local<v8::Context> context = isolate->GetCurrentContext();
-        
-        if (info.Length() < 1) {
-          isolate->ThrowException(v8::Exception::TypeError(
-              v8::String::NewFromUtf8(isolate, "require() requires a module name").ToLocalChecked()));
-          return;
-        }
-        
-        v8::String::Utf8Value module_name(isolate, info[0]);
-        // Module resolution will be implemented
-        info.GetReturnValue().Set(v8::Object::New(isolate));
-      });
-  
-  require_template->SetClassName(
-      v8::String::NewFromUtf8(isolate_, "elyxionRequire").ToLocalChecked());
 }
 
 void Environment::SetupCallbacks() {
-  // Setup promise hooks
-  isolate_->SetPromiseHookCallback(PromiseHook);
-  isolate_->SetHostPromiseRejectCallback(HostPromiseRejectCallback);
+  // Promise hooks - use available V8 API
+  // Note: SetPromiseHookCallback may not be available in all V8 versions
 }
 
 bool Environment::Bootstrap() {
   v8::Context::Scope context_scope(context());
-  v8::EscapableHandleScope handle_scope(isolate_);
   
   SetupCallbacks();
   
-  return handle_scope.EscapeMaybe(v8::True(isolate_)).IsNothing() || true;
+  return true;
 }
 
 bool Environment::Run() {
@@ -304,8 +283,6 @@ void Environment::PrintStackTrace(v8::Local<v8::Value> error) {
   v8::TryCatch try_catch(isolate_);
   v8::Local<v8::Object> error_obj = error->ToObject(context()).ToLocalChecked();
   
-  v8::Local<v8::String> name_key = v8::String::NewFromUtf8(isolate_, "name").ToLocalChecked();
-  v8::Local<v8::String> message_key = v8::String::NewFromUtf8(isolate_, "message").ToLocalChecked();
   v8::Local<v8::String> stack_key = v8::String::NewFromUtf8(isolate_, "stack").ToLocalChecked();
   
   v8::Local<v8::Value> stack;
@@ -313,11 +290,14 @@ void Environment::PrintStackTrace(v8::Local<v8::Value> error) {
     v8::String::Utf8Value stack_str(isolate_, stack);
     std::cerr << *stack_str << std::endl;
   } else {
+    v8::Local<v8::String> name_key = v8::String::NewFromUtf8(isolate_, "name").ToLocalChecked();
+    v8::Local<v8::String> message_key = v8::String::NewFromUtf8(isolate_, "message").ToLocalChecked();
+    
     v8::Local<v8::Value> name;
     v8::Local<v8::Value> message;
     
-    error_obj->Get(context(), name_key).ToLocal(&name);
-    error_obj->Get(context(), message_key).ToLocal(&message);
+    (void)error_obj->Get(context(), name_key).ToLocal(&name);
+    (void)error_obj->Get(context(), message_key).ToLocal(&message);
     
     if (!name->IsUndefined()) {
       v8::String::Utf8Value name_str(isolate_, name);
@@ -331,16 +311,6 @@ void Environment::PrintStackTrace(v8::Local<v8::Value> error) {
     
     std::cerr << std::endl;
   }
-}
-
-void Environment::PromiseHook(v8::PromiseHookType type,
-                               v8::Local<v8::Promise> promise,
-                               v8::Local<v8::Value> parent) {
-  // Promise tracking will be implemented
-}
-
-void Environment::HostPromiseRejectCallback(v8::PromiseRejectMessage message) {
-  // Unhandled rejection tracking will be implemented
 }
 
 }  // namespace elyxion

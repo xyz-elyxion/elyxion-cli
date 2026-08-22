@@ -27,20 +27,10 @@ class Environment {
   uv_loop_t* event_loop() const { return loop_; }
   v8::Local<v8::Context> context() const { return context_.Get(isolate_); }
 
-  // Scope management
-  class Scope {
-   public:
-    explicit Scope(Environment* env);
-    ~Scope();
-   private:
-    Environment* env_;
-  };
-
   // Handle scope
   v8::HandleScope* handle_scope() { return &handle_scope_; }
 
   // Error handling
-  v8::TryCatch* try_catch() { return &try_catch_; }
   void PrintStackTrace(v8::Local<v8::Value> error);
 
   // Script execution
@@ -57,27 +47,12 @@ class Environment {
   void SetupProcessObject();
   void SetupGlobalObject();
   void SetupCallbacks();
-  void SetupTimeouts();
-
-  // Built-in module loading
-  void LoadBuiltins();
-  v8::MaybeLocal<v8::Object> GetBuiltin(const std::string& name);
-
-  // Promise support
-  static void PromiseHook(v8::PromiseHookType type,
-                          v8::Local<v8::Promise> promise,
-                          v8::Local<v8::Value> parent);
-
-  // Unhandled rejection tracking
-  static void HostPromiseRejectCallback(
-      v8::PromiseRejectMessage message);
 
   // Data
   v8::Isolate* isolate_;
   uv_loop_t* loop_;
   v8::HandleScope handle_scope_;
   v8::Global<v8::Context> context_;
-  v8::TryCatch try_catch_;
   bool running_;
 
   // References to JS objects
