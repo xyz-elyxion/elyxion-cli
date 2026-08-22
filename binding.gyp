@@ -12,15 +12,9 @@
         "src/loop",
         "<!(node -e \"require('path').join(process.cwd(), 'include')\")"
       ],
-      "libraries": [
-        "-lssl",
-        "-lcrypto"
-      ],
       "conditions": [
         ["OS=='linux'", {
           "libraries": [
-            "-lssl",
-            "-lcrypto",
             "-lpthread"
           ]
         }],
