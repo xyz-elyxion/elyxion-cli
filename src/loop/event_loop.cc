@@ -1,5 +1,6 @@
 #include "event_loop.h"
 #include <algorithm>
+#include <iostream>
 
 namespace elyxion {
 
