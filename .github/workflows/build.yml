@@ -83,7 +83,8 @@ jobs:
         cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64
         cmake --build build-x64 --config Release
         mkdir -p build
-        cp build-x64/Release/elyxion.node build/elyxion-x64.node 2>/dev/null || true
+        # Find the .node file (location varies by generator)
+        find build-x64 -name "elyxion.node" -exec cp {} build/elyxion-x64.node \;
 
     # Build arm64
     - name: Build arm64
@@ -91,8 +92,8 @@ jobs:
         cmake -B build-arm64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
         cmake --build build-arm64 --config Release
         mkdir -p build
-        cp build-arm64/Release/elyxion.node build/elyxion-arm64.node 2>/dev/null || \
-          cp build-arm64/elyxion.node build/elyxion-arm64.node 2>/dev/null || true
+        # Find the .node file (location varies by generator)
+        find build-arm64 -name "elyxion.node" -exec cp {} build/elyxion-arm64.node \;
 
     # Create universal binary
     - name: Create Universal Binary

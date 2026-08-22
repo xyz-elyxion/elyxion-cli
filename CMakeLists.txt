@@ -166,12 +166,13 @@ else()
 endif()
 
 # ---- Post-Build: Copy .node to standard location ----
-if(ELYXION_AS_ADDON)
+# Note: Workflow handles copying for multi-arch builds
+if(ELYXION_AS_ADDON AND NOT DEFINED CMAKE_OSX_ARCHITECTURES)
     add_custom_command(TARGET elyxion POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/build/Release
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/Release
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:elyxion>
-            ${CMAKE_SOURCE_DIR}/build/Release/elyxion.node
+            ${CMAKE_BINARY_DIR}/Release/elyxion.node
         COMMENT "Copying elyxion.node to build/Release/"
     )
 endif()
