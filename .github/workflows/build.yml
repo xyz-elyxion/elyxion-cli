@@ -135,6 +135,7 @@ jobs:
 
     - name: Extract ARM64 Binary
       run: |
+        mkdir -p build
         docker create --name extract elyxion-arm64:latest
         docker cp extract:/app/build/Release/elyxion.node build/elyxion-arm64.node
         docker rm extract
