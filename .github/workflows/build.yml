@@ -23,14 +23,14 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
 
-    - name: Install dependencies using elyx
-      run: node bin/elyx install
+    - name: Install build dependencies (npm)
+      run: npm install --ignore-scripts
 
     - name: Build native addon
-      run: node bin/elyxion --eval "require('child_process').execSync('node-gyp rebuild', {stdio: 'inherit'})"
+      run: npx node-gyp rebuild
 
     - name: Run tests
-      run: node bin/elyxion test/basic.test.js
+      run: node test/basic.test.js
 
     - name: Test CLI
       run: |
@@ -68,8 +68,6 @@ jobs:
         platforms: linux/arm64
         push: false
         tags: elyxion:arm64
-        build-args: |
-          NODE_VERSION=22
 
   build-macos-universal:
     runs-on: macos-latest
@@ -82,17 +80,17 @@ jobs:
       with:
         node-version: '22.x'
 
-    - name: Install dependencies using elyx
-      run: node bin/elyx install
+    - name: Install build dependencies (npm)
+      run: npm install --ignore-scripts
 
     - name: Build for x64
       run: |
-        node-gyp rebuild --arch=x64
+        npx node-gyp rebuild --arch=x64
         mv build/Release/elyxion.node build/elyxion-x64.node
 
     - name: Build for arm64
       run: |
-        node-gyp rebuild --arch=arm64
+        npx node-gyp rebuild --arch=arm64
         mv build/Release/elyxion.node build/elyxion-arm64.node
 
     - name: Create universal binary
@@ -117,11 +115,11 @@ jobs:
       with:
         node-version: '22.x'
 
-    - name: Install dependencies using elyx
-      run: node bin/elyx install
+    - name: Install build dependencies (npm)
+      run: npm install --ignore-scripts
 
     - name: Build native addon
-      run: node-gyp rebuild
+      run: npx node-gyp rebuild
 
     - name: Upload Windows build
       uses: actions/upload-artifact@v4

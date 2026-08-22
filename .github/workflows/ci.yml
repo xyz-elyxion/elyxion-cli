@@ -18,9 +18,6 @@ jobs:
       with:
         node-version: '22.x'
 
-    - name: Install dependencies using elyx
-      run: node bin/elyx install
-
     - name: Lint JavaScript
       run: |
         echo "Linting JavaScript files..."
@@ -46,14 +43,14 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
 
-    - name: Install dependencies using elyx
-      run: node bin/elyx install
+    - name: Install build dependencies (npm)
+      run: npm install --ignore-scripts
 
     - name: Build native addon
-      run: node-gyp rebuild
+      run: npx node-gyp rebuild
 
     - name: Run unit tests
-      run: node bin/elyxion test/basic.test.js
+      run: node test/basic.test.js
 
     - name: Test CLI commands
       run: |
@@ -86,11 +83,11 @@ jobs:
       with:
         node-version: '22.x'
 
-    - name: Install dependencies using elyx
-      run: node bin/elyx install
+    - name: Install build dependencies (npm)
+      run: npm install --ignore-scripts
 
     - name: Build for ${{ matrix.os }}-${{ matrix.arch }}
-      run: node-gyp rebuild
+      run: npx node-gyp rebuild
 
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
@@ -110,19 +107,13 @@ jobs:
       with:
         node-version: '22.x'
 
-    - name: Install dependencies using elyx
-      run: node bin/elyx install
+    - name: Install build dependencies (npm)
+      run: npm install --ignore-scripts
 
     - name: Build
-      run: node-gyp rebuild
+      run: npx node-gyp rebuild
 
     - name: Run tests with coverage
       run: |
         echo "Running tests with coverage..."
-        node bin/elyxion test/basic.test.js
-
-    - name: Upload coverage
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage/lcov.info
-        flags: unittests
+        node test/basic.test.js

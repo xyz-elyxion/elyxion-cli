@@ -23,14 +23,14 @@ jobs:
       with:
         node-version: '22.x'
 
-    - name: Install dependencies using elyx
-      run: node bin/elyx install
+    - name: Install build dependencies (npm)
+      run: npm install --ignore-scripts
 
     - name: Build native addon
-      run: node-gyp rebuild
+      run: npx node-gyp rebuild
 
     - name: Run tests
-      run: node bin/elyxion test/basic.test.js
+      run: node test/basic.test.js
 
     - name: Get version info
       id: version

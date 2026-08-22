@@ -5,21 +5,21 @@ all: build
 
 # Build the native addon
 build:
-	node bin/elyxion --eval "require('child_process').execSync('node-gyp rebuild', {stdio: 'inherit'})"
+	npx node-gyp rebuild
 
 # Clean build artifacts
 clean:
-	node-gyp clean
+	npx node-gyp clean
 	rm -rf build/
 	rm -rf node_modules/
 
 # Run tests
 test:
-	node bin/elyxion test/basic.test.js
+	node test/basic.test.js
 
-# Install dependencies
+# Install dependencies (use npm for build tools)
 install:
-	node bin/elyx install
+	npm install
 
 # Install globally
 link:
