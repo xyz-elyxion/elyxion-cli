@@ -10,18 +10,18 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  # ---- Standalone Native Builds (Linux / macOS) ----
+  build-standalone:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            dist_name: elyxion-linux-x64
+            artifact: elyxion-linux-x64
           - os: macos-latest
-            dist_name: elyxion-macos-universal
-          - os: windows-latest
-            dist_name: elyxion-windows-x64
+            artifact: elyxion-macos-universal
+            # macOS universal: we build both archs separately and lipo
 
     steps:
     - name: Checkout
@@ -32,135 +32,124 @@ jobs:
       with:
         node-version: 22.x
 
-    - name: Install Dependencies
-      shell: bash
-      run: npm install --ignore-scripts
-
-    # ---- Linux Build ----
-    - name: Build (Linux)
+    # ---- Linux standalone build ----
+    - name: Build Standalone (Linux)
       if: runner.os == 'Linux'
       run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DELYXION_AS_ADDON=OFF
         cmake --build build --config Release
-
-    # ---- macOS Universal Build ----
-    - name: Build x64 (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64
-        cmake --build build-x64 --config Release
-
-    - name: Build arm64 (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        cmake -B build-arm64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
-        cmake --build build-arm64 --config Release
-
-    - name: Create Universal Binary (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        mkdir -p build-x64-staging build-arm64-staging build/Release
-        find build-x64 -name "elyxion.node" -exec cp {} build-x64-staging/elyxion.node \;
-        find build-arm64 -name "elyxion.node" -exec cp {} build-arm64-staging/elyxion.node \;
-        lipo -create build-x64-staging/elyxion.node build-arm64-staging/elyxion.node -output build/Release/elyxion.node
-
-    # ---- Windows Build ----
-    - name: Build (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        cmake -B build -A x64
-        cmake --build build --config Release
-
-    # ---- Package as self-contained bundle ----
-    - name: Copy Node.js binary
-      shell: bash
-      run: |
-        DIST=${{ matrix.dist_name }}
-        mkdir -p "$DIST"
-        # Copy Node.js binary
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          cp "$(which node)" "$DIST/node.exe"
-        else
-          cp "$(which node)" "$DIST/node"
-        fi
-
-    - name: Assemble Distribution
-      shell: bash
-      run: |
-        DIST=${{ matrix.dist_name }}
-        mkdir -p "$DIST"/lib "$DIST"/build/Release
-        cp -r lib/* "$DIST"/lib/
-        cp package.json README.md "$DIST"/
-        # Copy the native addon
-        find build build-x64 build-arm64 -name "elyxion.node" -exec cp {} "$DIST"/build/Release/ \; 2>/dev/null || true
-        cp build/Release/elyxion.node "$DIST"/build/Release/ 2>/dev/null || true
-
-    - name: Create launcher scripts (Unix)
-      if: runner.os != 'Windows'
-      shell: bash
-      run: |
-        DIST=${{ matrix.dist_name }}
-        cat > "$DIST/elyxion" << 'SCRIPT'
-        #!/bin/sh
-        DIR="$(cd "$(dirname "$0")" && pwd)"
-        exec "$DIR/node" "$DIR/lib/cli/index.js" "$@"
-        SCRIPT
-        chmod +x "$DIST/elyxion"
-
-        cat > "$DIST/elyx" << 'SCRIPT'
-        #!/bin/sh
-        DIR="$(cd "$(dirname "$0")" && pwd)"
-        exec "$DIR/node" "$DIR/lib/pkg/cli.js" "$@"
-        SCRIPT
-        chmod +x "$DIST/elyx"
-
-    - name: Create launcher scripts (Windows)
-      if: runner.os == 'Windows'
-      shell: bash
-      run: |
-        DIST=${{ matrix.dist_name }}
-        printf '@echo off\r\n"%%~dp0node.exe" "%%~dp0lib/cli/index.js" %%*\r\n' > "$DIST/elyxion.cmd"
-        printf '@echo off\r\n"%%~dp0node.exe" "%%~dp0lib/pkg/cli.js" %%*\r\n' > "$DIST/elyx.cmd"
+        mkdir -p dist
+        cp build/elyxion dist/
+        cp -r lib dist/
+        cp package.json README.md dist/ 2>/dev/null || true
+        # Copy libnode next to the binary
+        cp build/_deps/node_dist-src/lib/libnode.so.* dist/ 2>/dev/null || true
+        find /usr/local -name "libnode.so*" -exec cp {} dist/ \; 2>/dev/null || true
 
     - name: Package (Linux)
       if: runner.os == 'Linux'
       run: |
-        tar -czf ${{ matrix.dist_name }}.tar.gz ${{ matrix.dist_name }}
-
-    - name: Package (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        tar -czf ${{ matrix.dist_name }}.tar.gz ${{ matrix.dist_name }}
-
-    - name: Package (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        Compress-Archive -Path ${{ matrix.dist_name }} -DestinationPath ${{ matrix.dist_name }}.zip
+        tar -czf elyxion-linux-x64.tar.gz -C dist .
 
     - name: Upload Artifact (Linux)
       if: runner.os == 'Linux'
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.dist_name }}
-        path: ${{ matrix.dist_name }}.tar.gz
+        name: elyxion-linux-x64
+        path: elyxion-linux-x64.tar.gz
+
+    # ---- macOS universal standalone build ----
+    - name: Build x64 Standalone (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release -DELYXION_AS_ADDON=OFF -DCMAKE_OSX_ARCHITECTURES=x86_64
+        cmake --build build-x64 --config Release
+
+    - name: Build arm64 Standalone (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        cmake -B build-arm64 -DCMAKE_BUILD_TYPE=Release -DELYXION_AS_ADDON=OFF -DCMAKE_OSX_ARCHITECTURES=arm64
+        cmake --build build-arm64 --config Release
+
+    - name: Create Universal Binary (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        mkdir -p dist
+        lipo -create build-x64/elyxion build-arm64/elyxion -output dist/elyxion
+        cp -r lib dist/
+        cp package.json README.md dist/ 2>/dev/null || true
+        # Copy universal libnode too
+        lipo -create \
+          build-x64/_deps/node_dist-src/lib/libnode.127.dylib \
+          build-arm64/_deps/node_dist-src/lib/libnode.127.dylib \
+          -output dist/libnode.127.dylib 2>/dev/null || \
+        find build-x64/_deps/node_dist-src -name "libnode*.dylib" -exec cp {} dist/ \; 2>/dev/null || true
+
+    - name: Package (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        tar -czf elyxion-macos-universal.tar.gz -C dist .
 
     - name: Upload Artifact (macOS)
       if: runner.os == 'macOS'
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.dist_name }}
-        path: ${{ matrix.dist_name }}.tar.gz
+        name: elyxion-macos-universal
+        path: elyxion-macos-universal.tar.gz
+
+  # ---- Windows Standalone Build ----
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Cache V8 build (keyed by version + platform)
+    - name: Cache V8 Build
+      id: cache-v8
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/v8
+        key: v8-12.2.282-windows-x64-v1
+
+    - name: Build V8 (if not cached)
+      if: steps.cache-v8.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        Write-Host "Building V8 from source (first time only, ~90 min)..."
+        .\scripts\build-v8.ps1 -Version "12.2.282" -OutDir "$PWD\build\v8"
+      timeout-minutes: 180
+
+    - name: Build Elyxion Standalone
+      run: |
+        cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DELYXION_AS_ADDON=OFF -DV8_DIR="$PWD\build\v8"
+        cmake --build build --config Release
+
+    - name: Assemble Windows Distribution
+      shell: bash
+      run: |
+        DIST=elyxion-windows-x64
+        mkdir -p "$DIST"
+        cp build/Release/elyxion.exe "$DIST/"
+        cp -r lib "$DIST/"
+        cp package.json README.md "$DIST/" 2>/dev/null || true
+
+    - name: Package (Windows)
+      run: Compress-Archive -Path elyxion-windows-x64 -DestinationPath elyxion-windows-x64.zip
 
     - name: Upload Artifact (Windows)
-      if: runner.os == 'Windows'
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.dist_name }}
-        path: ${{ matrix.dist_name }}.zip
+        name: elyxion-windows-x64
+        path: elyxion-windows-x64.zip
 
   release:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build-standalone, build-windows]
     permissions:
       contents: write
 

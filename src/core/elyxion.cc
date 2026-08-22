@@ -38,6 +38,25 @@ int Start(int argc, char* argv[]) {
   return StartWithIsolate(&create_params, argc, argv);
 }
 
+// Helper: execute a string in the environment
+static bool ExecuteFileContent(Environment& env, const std::string& source_str, 
+                                const std::string& filename_str) {
+  v8::Isolate* isolate = env.isolate();
+  v8::Local<v8::String> source = 
+      v8::String::NewFromUtf8(isolate, source_str.c_str()).ToLocalChecked();
+  v8::Local<v8::String> fname = 
+      v8::String::NewFromUtf8(isolate, filename_str.c_str()).ToLocalChecked();
+  
+  v8::TryCatch try_catch(isolate);
+  v8::MaybeLocal<v8::Value> result = env.ExecuteString(source, fname);
+  
+  if (result.IsEmpty() && try_catch.HasCaught()) {
+    env.PrintStackTrace(try_catch.Exception());
+    return false;
+  }
+  return true;
+}
+
 int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) {
 #ifndef ELYXION_AS_ADDON
   InitPlatform();
@@ -47,6 +66,7 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
   bool run_interactive = false;
   std::string eval_string;
   std::string filename;
+  std::string require_module;
   
   for (int i = 1; i < argc; i++) {
     std::string arg(argv[i]);
@@ -54,6 +74,10 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
     if (arg == "-e" || arg == "--eval") {
       if (i + 1 < argc) {
         eval_string = argv[++i];
+      }
+    } else if (arg == "-r" || arg == "--require") {
+      if (i + 1 < argc) {
+        require_module = argv[++i];
       }
     } else if (arg == "-i" || arg == "--interactive") {
       run_interactive = true;
@@ -68,6 +92,7 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       std::cout << std::endl;
       std::cout << "Options:" << std::endl;
       std::cout << "  -e, --eval <code>     Evaluate code" << std::endl;
+      std::cout << "  -r, --require <mod>   Require module before script" << std::endl;
       std::cout << "  -i, --interactive     Start REPL" << std::endl;
       std::cout << "  -v, --version         Print version" << std::endl;
       std::cout << "  -h, --help            Print help" << std::endl;
@@ -103,14 +128,31 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       return 1;
     }
     
+    // Load bootstrap JS from disk (provides EventEmitter, Buffer, etc.)
+    // After this, overwrite require with the C++ native version
+    {
+      std::ifstream bootstrap_file("lib/bootstrap.js");
+      if (bootstrap_file.is_open()) {
+        std::stringstream bbuf;
+        bbuf << bootstrap_file.rdbuf();
+        if (!ExecuteFileContent(env, bbuf.str(), "lib/bootstrap.js")) {
+          std::cerr << "Failed to bootstrap runtime" << std::endl;
+        }
+        // Override require with C++ native version
+        env.SetupRequire();
+      }
+    }
+    
+    // Handle pre-require modules
+    if (!require_module.empty()) {
+      std::stringstream preload;
+      preload << "require('" << require_module << "');";
+      ExecuteFileContent(env, preload.str(), "[require]");
+    }
+    
     // Execute code or script
     if (!eval_string.empty()) {
-      v8::Local<v8::String> source = 
-          v8::String::NewFromUtf8(isolate, eval_string.c_str()).ToLocalChecked();
-      v8::Local<v8::String> filename_str = 
-          v8::String::NewFromUtf8(isolate, "[eval]").ToLocalChecked();
-      
-      v8::MaybeLocal<v8::Value> result = env.ExecuteString(source, filename_str);
+      ExecuteFileContent(env, eval_string, "[eval]");
       
     } else if (!filename.empty()) {
       // Read file
@@ -125,12 +167,7 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       
       std::stringstream buffer;
       buffer << file.rdbuf();
-      std::string source_str = buffer.str();
-      
-      v8::Local<v8::String> source = 
-          v8::String::NewFromUtf8(isolate, source_str.c_str()).ToLocalChecked();
-      v8::Local<v8::String> filename_str = 
-          v8::String::NewFromUtf8(isolate, filename.c_str()).ToLocalChecked();
+      ExecuteFileContent(env, buffer.str(), filename);
       
     } else if (run_interactive) {
       // Start REPL
@@ -158,7 +195,6 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
           std::cout << "  .clear           Clear context" << std::endl;
           continue;
         } else if (line == ".clear") {
-          // Will be implemented
           std::cout << "Context cleared" << std::endl;
           continue;
         }

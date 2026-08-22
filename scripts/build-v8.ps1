@@ -1,0 +1,135 @@
+# build-v8.ps1
+# Builds V8 monolithic library for Windows standalone builds.
+# Caches the checkout and build output for fast CI runs.
+#
+# Usage: .\scripts\build-v8.ps1 -Version "11.4.183" -OutDir "C:\v8"
+#
+# First run: ~2-3 hours (clone + build)
+# Cached run: ~5-10 minutes
+
+param(
+    [string]$Version = "12.2.282",
+    [string]$OutDir = "$PSScriptRoot\..\build\v8",
+    [string]$CacheDir = "$env:USERPROFILE\.v8-cache"
+)
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "=== V8 Build for Elyxion (Windows) ===" -ForegroundColor Cyan
+Write-Host "Version: $Version"
+Write-Host "Output:  $OutDir"
+Write-Host ""
+
+# ---- Helper: Check cache ----
+$cacheKey = "v8-$Version-windows-x64"
+$cachedBuild = Join-Path $CacheDir $cacheKey
+
+if (Test-Path "$cachedBuild\include\v8.h" -PathType Leaf) {
+    Write-Host "[CACHE HIT] Using cached V8 from $cachedBuild" -ForegroundColor Green
+    Copy-Item -Recurse -Force "$cachedBuild\*" "$OutDir\"
+    Write-Host "[DONE] V8 is ready at $OutDir"
+    exit 0
+}
+
+Write-Host "[CACHE MISS] Building V8 $Version from source..." -ForegroundColor Yellow
+
+# ---- Install depot_tools ----
+$depotToolsDir = Join-Path $CacheDir "depot_tools"
+if (-not (Test-Path "$depotToolsDir\gclient.bat")) {
+    Write-Host "Installing depot_tools..."
+    git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git $depotToolsDir
+}
+
+$env:PATH = "$depotToolsDir;$env:PATH"
+$env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
+
+# ---- Clone V8 ----
+$v8Src = Join-Path $CacheDir "v8-src"
+if (-not (Test-Path "$v8Src\.gclient")) {
+    Write-Host "Cloning V8 (this takes a while)..."
+    Push-Location $CacheDir
+    # Use fetch to get V8 with dependencies
+    & cmd /c "fetch v8 2>&1"
+    Pop-Location
+}
+
+Push-Location $v8Src
+
+# ---- Checkout version ----
+Write-Host "Checking out V8 $Version..."
+git fetch --tags
+git checkout "tags/$Version" -B "elyxion-$Version" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    # Try branch head format
+    git checkout "branch-heads/$Version" -B "elyxion-$Version" 2>$null
+}
+
+# ---- Sync dependencies ----
+Write-Host "Syncing dependencies..."
+gclient sync -D 2>&1 | Select-Object -Last 5
+
+# ---- Generate build ----
+$gnArgs = @(
+    'is_debug = false',
+    'target_cpu = "x64"',
+    'is_clang = false',
+    'use_custom_libcxx = false',
+    'v8_monolithic = true',
+    'v8_use_external_startup_data = false',
+    'v8_enable_i18n_support = false',
+    'treat_warnings_as_errors = false',
+    'symbol_level = 0',
+    'use_lld = false'
+) -join " "
+
+$buildDir = "out\x64.release"
+
+Write-Host "Generating build files..."
+& gn gen $buildDir --args="$gnArgs"
+
+# ---- Build ----
+Write-Host "Building V8 (this takes 30-90 minutes)..."
+& ninja -C $buildDir v8_monolith
+
+# ---- Collect output ----
+Write-Host "Collecting build artifacts..."
+$artifacts = @(
+    "$buildDir\v8_monolith.lib",
+    "$buildDir\v8_monolith.dll.lib"
+)
+
+$includeDir = Join-Path $OutDir "include"
+Remove-Item -Recurse -Force $OutDir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
+
+# Copy headers
+Copy-Item -Recurse "$v8Src\include\*" "$includeDir\" -Force
+
+# Copy libraries
+foreach ($lib in $artifacts) {
+    if (Test-Path $lib) {
+        Copy-Item $lib $OutDir -Force
+    }
+}
+
+# Copy DLLs if any
+$dlls = @(
+    "$buildDir\v8_monolith.dll",
+    "$buildDir\icudtl.dat",
+    "$buildDir\snapshot_blob.bin"
+)
+foreach ($dll in $dlls) {
+    if (Test-Path $dll) {
+        Copy-Item $dll $OutDir -Force
+    }
+}
+
+# ---- Save to cache ----
+Write-Host "Saving to cache..."
+Remove-Item -Recurse -Force $cachedBuild -ErrorAction SilentlyContinue
+Copy-Item -Recurse $OutDir $cachedBuild -Force
+
+Pop-Location
+
+Write-Host "[DONE] V8 built and cached at $OutDir" -ForegroundColor Green

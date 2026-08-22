@@ -4,6 +4,7 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 #include <uv.h>
 #include <v8.h>
 
@@ -42,6 +43,12 @@ class Environment {
   // Bootstrap
   bool Bootstrap();
 
+  // Module system (standalone builds)
+  void SetupRequire();
+  v8::Local<v8::Value> NativeRequire(const std::string& id);
+  v8::Local<v8::Value> LoadJSFile(const std::string& path);
+  void RegisterBuiltin(const std::string& name, const std::string& path);
+
  private:
   // Setup functions
   void SetupProcessObject();
@@ -58,6 +65,10 @@ class Environment {
   // References to JS objects
   v8::Global<v8::Object> process_;
   v8::Global<v8::Object> global_;
+
+  // Module cache
+  std::unordered_map<std::string, v8::Global<v8::Object>> module_cache_;
+  std::unordered_map<std::string, std::string> builtin_modules_;
 };
 
 }  // namespace elyxion

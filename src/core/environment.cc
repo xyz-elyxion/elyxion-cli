@@ -53,7 +53,7 @@ bool Environment::Initialize(const std::string& main_script) {
   SetupProcessObject();
   SetupGlobalObject();
   
-  // Bootstrap the runtime
+  // Bootstrap the runtime (SetupRequire is called after bootstrap in elyxion.cc)
   if (!Bootstrap()) {
     return false;
   }
@@ -311,6 +311,147 @@ void Environment::PrintStackTrace(v8::Local<v8::Value> error) {
     
     std::cerr << std::endl;
   }
+}
+
+void Environment::SetupRequire() {
+  v8::Context::Scope context_scope(context());
+  
+  // Register built-in modules with their source paths
+  RegisterBuiltin("fs", "lib/modules/fs.js");
+  RegisterBuiltin("path", "lib/modules/path.js");
+  RegisterBuiltin("http", "lib/modules/http.js");
+  RegisterBuiltin("https", "lib/modules/https.js");
+  RegisterBuiltin("net", "lib/modules/net.js");
+  RegisterBuiltin("os", "lib/modules/os.js");
+  RegisterBuiltin("util", "lib/modules/util.js");
+  RegisterBuiltin("events", "lib/modules/events.js");
+  RegisterBuiltin("stream", "lib/modules/stream.js");
+  RegisterBuiltin("buffer", "lib/modules/buffer.js");
+  RegisterBuiltin("crypto", "lib/modules/crypto.js");
+  RegisterBuiltin("child_process", "lib/modules/child_process.js");
+  RegisterBuiltin("url", "lib/modules/url.js");
+  RegisterBuiltin("querystring", "lib/modules/querystring.js");
+  RegisterBuiltin("assert", "lib/modules/assert.js");
+  RegisterBuiltin("dns", "lib/modules/dns.js");
+  RegisterBuiltin("tls", "lib/modules/tls.js");
+
+  // Expose require to JS
+  v8::Local<v8::ObjectTemplate> require_fn = v8::ObjectTemplate::New(isolate_);
+  
+  auto* env_ptr = this;
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "require").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [env_ptr](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 1) {
+          info.GetIsolate()->ThrowException(
+              v8::String::NewFromUtf8(info.GetIsolate(), "require() needs an argument").ToLocalChecked());
+          return;
+        }
+        v8::String::Utf8Value module_id(info.GetIsolate(), info[0]);
+        v8::Local<v8::Value> exports = env_ptr->NativeRequire(*module_id);
+        info.GetReturnValue().Set(exports);
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // Add module to global (Node.js compatibility)
+  v8::Local<v8::Object> module_obj = v8::Object::New(isolate_);
+  module_obj->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "exports").ToLocalChecked(),
+      v8::Object::New(isolate_)).Check();
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "module").ToLocalChecked(),
+      module_obj).Check();
+}
+
+void Environment::RegisterBuiltin(const std::string& name, const std::string& path) {
+  builtin_modules_[name] = path;
+}
+
+v8::Local<v8::Value> Environment::NativeRequire(const std::string& id) {
+  // Check cache
+  auto it = module_cache_.find(id);
+  if (it != module_cache_.end()) {
+    return it->second.Get(isolate_);
+  }
+
+  // Check built-in modules
+  auto builtin = builtin_modules_.find(id);
+  if (builtin != builtin_modules_.end()) {
+    v8::Local<v8::Value> exports = LoadJSFile(builtin->second);
+    module_cache_[id].Reset(isolate_, exports.As<v8::Object>());
+    return exports;
+  }
+
+  // Relative path resolution
+  if (id[0] == '.' || id[0] == '/') {
+    std::string resolved = id;
+    if (id.find(".js") == std::string::npos) {
+      resolved += ".js";
+    }
+    v8::Local<v8::Value> exports = LoadJSFile(resolved);
+    module_cache_[id].Reset(isolate_, exports.As<v8::Object>());
+    return exports;
+  }
+
+  // Module not found
+  std::string err = "Cannot find module '" + id + "'";
+  isolate_->ThrowException(
+      v8::String::NewFromUtf8(isolate_, err.c_str()).ToLocalChecked());
+  return v8::Undefined(isolate_);
+}
+
+v8::Local<v8::Value> Environment::LoadJSFile(const std::string& path) {
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    std::string err = "Cannot find module '" + path + "'";
+    isolate_->ThrowException(
+        v8::String::NewFromUtf8(isolate_, err.c_str()).ToLocalChecked());
+    return v8::Undefined(isolate_);
+  }
+
+  std::stringstream buf;
+  buf << file.rdbuf();
+  std::string source = buf.str();
+
+  v8::TryCatch try_catch(isolate_);
+  v8::Local<v8::String> source_str =
+      v8::String::NewFromUtf8(isolate_, source.c_str()).ToLocalChecked();
+  v8::Local<v8::String> filename_str =
+      v8::String::NewFromUtf8(isolate_, path.c_str()).ToLocalChecked();
+
+  v8::ScriptOrigin origin(isolate_, filename_str);
+  v8::Local<v8::Script> script;
+  
+  if (!v8::Script::Compile(context(), source_str, &origin).ToLocal(&script)) {
+    if (try_catch.HasCaught()) {
+      PrintStackTrace(try_catch.Exception());
+    }
+    return v8::Undefined(isolate_);
+  }
+
+  v8::MaybeLocal<v8::Value> result = script->Run(context());
+  if (result.IsEmpty()) {
+    if (try_catch.HasCaught()) {
+      PrintStackTrace(try_catch.Exception());
+    }
+    return v8::Undefined(isolate_);
+  }
+
+  // Return module.exports
+  v8::Local<v8::Object> global = context()->Global();
+  v8::Local<v8::Value> module_val;
+  if (global->Get(context(), 
+      v8::String::NewFromUtf8(isolate_, "module").ToLocalChecked())
+      .ToLocal(&module_val) && module_val->IsObject()) {
+    v8::Local<v8::Object> module_obj = module_val.As<v8::Object>();
+    v8::Local<v8::Value> exports;
+    if (module_obj->Get(context(),
+        v8::String::NewFromUtf8(isolate_, "exports").ToLocalChecked())
+        .ToLocal(&exports)) {
+      return exports;
+    }
+  }
+
+  return v8::Object::New(isolate_);
 }
 
 }  // namespace elyxion
