@@ -3,11 +3,8 @@ build
 .git
 .github
 *.log
-*.md
 !README.md
 LICENSE
-test
-examples
 .env
 .env.*
 coverage
