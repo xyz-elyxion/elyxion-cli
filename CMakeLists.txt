@@ -82,7 +82,6 @@ else()
     FetchContent_Declare(
         libuv
         URL "https://dist.libuv.org/dist/v1.48.0/libuv-v1.48.0.tar.gz"
-        URL_HASH SHA256=7f1b2ef3b184fc258a0697d3c0c7dbc72408a0bc9b3135e917edea12b01fec6b
     )
     FetchContent_MakeAvailable(libuv)
     message(STATUS "libuv: built from source (v1.48.0)")
