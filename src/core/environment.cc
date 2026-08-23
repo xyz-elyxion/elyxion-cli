@@ -336,19 +336,20 @@ void Environment::SetupRequire() {
   RegisterBuiltin("tls", "lib/modules/tls.js");
 
   // Expose require to JS
-  v8::Local<v8::ObjectTemplate> require_fn = v8::ObjectTemplate::New(isolate_);
+  isolate_->SetData(0, this);
   
-  auto* env_ptr = this;
   context()->Global()->Set(context(),
       v8::String::NewFromUtf8(isolate_, "require").ToLocalChecked(),
-      v8::FunctionTemplate::New(isolate_, [env_ptr](const v8::FunctionCallbackInfo<v8::Value>& info) {
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
         if (info.Length() < 1) {
-          info.GetIsolate()->ThrowException(
-              v8::String::NewFromUtf8(info.GetIsolate(), "require() needs an argument").ToLocalChecked());
+          isolate->ThrowException(
+              v8::String::NewFromUtf8(isolate, "require() needs an argument").ToLocalChecked());
           return;
         }
-        v8::String::Utf8Value module_id(info.GetIsolate(), info[0]);
-        v8::Local<v8::Value> exports = env_ptr->NativeRequire(*module_id);
+        v8::String::Utf8Value module_id(isolate, info[0]);
+        v8::Local<v8::Value> exports = env->NativeRequire(*module_id);
         info.GetReturnValue().Set(exports);
       })->GetFunction(context()).ToLocalChecked()).Check();
 
