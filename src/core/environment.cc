@@ -3,12 +3,19 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cstdlib>
+
+#ifndef _WIN32
+extern char** environ;
+#endif
 
 namespace elyxion {
 
-Environment::Environment(v8::Isolate* isolate, uv_loop_t* loop)
+Environment::Environment(v8::Isolate* isolate, uv_loop_t* loop, const std::string& resource_root)
     : isolate_(isolate),
       loop_(loop),
+      resource_root_(resource_root),
+      current_module_dir_(resource_root),
       handle_scope_(isolate),
       running_(false) {
 }
@@ -61,6 +68,18 @@ bool Environment::Initialize(const std::string& main_script) {
   return true;
 }
 
+void Environment::SetArgv(int argc, char* argv[]) {
+  v8::HandleScope scope(isolate_);
+  v8::Context::Scope context_scope(context());
+  v8::Local<v8::Object> process = process_.Get(isolate_);
+  v8::Local<v8::Array> argv_array = v8::Array::New(isolate_, argc);
+  for (int i = 0; i < argc; ++i) {
+    argv_array->Set(context(), static_cast<uint32_t>(i),
+        v8::String::NewFromUtf8(isolate_, argv[i]).ToLocalChecked()).Check();
+  }
+  process->Set(context(), v8::String::NewFromUtf8(isolate_, "argv").ToLocalChecked(), argv_array).Check();
+}
+
 void Environment::SetupProcessObject() {
   v8::Context::Scope context_scope(context());
   
@@ -78,6 +97,13 @@ void Environment::SetupProcessObject() {
   process->Set(context(),
       v8::String::NewFromUtf8(isolate_, "version").ToLocalChecked(),
       v8::String::NewFromUtf8(isolate_, ELYXION_VERSION_STRING).ToLocalChecked()).Check();
+
+  v8::Local<v8::Object> versions = v8::Object::New(isolate_);
+  versions->Set(context(), v8::String::NewFromUtf8(isolate_, "elyxion").ToLocalChecked(),
+      v8::String::NewFromUtf8(isolate_, ELYXION_VERSION_STRING).ToLocalChecked()).Check();
+  versions->Set(context(), v8::String::NewFromUtf8(isolate_, "v8").ToLocalChecked(),
+      v8::String::NewFromUtf8(isolate_, v8::V8::GetVersion()).ToLocalChecked()).Check();
+  process->Set(context(), v8::String::NewFromUtf8(isolate_, "versions").ToLocalChecked(), versions).Check();
   
   process->Set(context(),
       v8::String::NewFromUtf8(isolate_, "platform").ToLocalChecked(),
@@ -117,6 +143,34 @@ void Environment::SetupProcessObject() {
         int exit_code = info.Length() > 0 ? info[0]->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0) : 0;
         exit(exit_code);
       })->GetFunction(context()).ToLocalChecked()).Check();
+
+  process->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "nextTick").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() > 0 && info[0]->IsFunction()) {
+          std::vector<v8::Local<v8::Value>> args;
+          for (int i = 1; i < info.Length(); ++i) args.push_back(info[i]);
+          info[0].As<v8::Function>()->Call(
+              info.GetIsolate()->GetCurrentContext(),
+              info.GetIsolate()->GetCurrentContext()->Global(),
+              static_cast<int>(args.size()), args.empty() ? nullptr : args.data()).ToLocalChecked();
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_readline").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() > 0) {
+          v8::String::Utf8Value prompt(info.GetIsolate(), info[0]);
+          std::cout << *prompt << std::flush;
+        }
+        std::string line;
+        if (std::getline(std::cin, line)) {
+          info.GetReturnValue().Set(v8::String::NewFromUtf8(info.GetIsolate(), line.c_str()).ToLocalChecked());
+        } else {
+          info.GetReturnValue().Set(v8::Null(info.GetIsolate()));
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
   
   process->Set(context(),
       v8::String::NewFromUtf8(isolate_, "cwd").ToLocalChecked(),
@@ -141,8 +195,7 @@ void Environment::SetupProcessObject() {
   // Windows environment variables
   // TODO: Add Windows env support
 #else
-  extern char** environ;
-  for (char** envp = environ; *envp; envp++) {
+  for (char** envp = ::environ; *envp; envp++) {
     std::string entry(*envp);
     size_t eq = entry.find('=');
     if (eq != std::string::npos) {
@@ -317,23 +370,24 @@ void Environment::SetupRequire() {
   v8::Context::Scope context_scope(context());
   
   // Register built-in modules with their source paths
-  RegisterBuiltin("fs", "lib/modules/fs.js");
-  RegisterBuiltin("path", "lib/modules/path.js");
-  RegisterBuiltin("http", "lib/modules/http.js");
-  RegisterBuiltin("https", "lib/modules/https.js");
-  RegisterBuiltin("net", "lib/modules/net.js");
-  RegisterBuiltin("os", "lib/modules/os.js");
-  RegisterBuiltin("util", "lib/modules/util.js");
-  RegisterBuiltin("events", "lib/modules/events.js");
-  RegisterBuiltin("stream", "lib/modules/stream.js");
-  RegisterBuiltin("buffer", "lib/modules/buffer.js");
-  RegisterBuiltin("crypto", "lib/modules/crypto.js");
-  RegisterBuiltin("child_process", "lib/modules/child_process.js");
-  RegisterBuiltin("url", "lib/modules/url.js");
-  RegisterBuiltin("querystring", "lib/modules/querystring.js");
-  RegisterBuiltin("assert", "lib/modules/assert.js");
-  RegisterBuiltin("dns", "lib/modules/dns.js");
-  RegisterBuiltin("tls", "lib/modules/tls.js");
+  RegisterBuiltin("fs", "modules/fs.js");
+  RegisterBuiltin("path", "modules/path.js");
+  RegisterBuiltin("http", "modules/http.js");
+  RegisterBuiltin("https", "modules/http.js");
+  RegisterBuiltin("net", "modules/net.js");
+  RegisterBuiltin("os", "modules/os.js");
+  RegisterBuiltin("util", "modules/util.js");
+  RegisterBuiltin("events", "modules/events.js");
+  RegisterBuiltin("stream", "modules/stream.js");
+  RegisterBuiltin("buffer", "modules/buffer.js");
+  RegisterBuiltin("crypto", "modules/crypto.js");
+  RegisterBuiltin("child_process", "modules/child_process.js");
+  RegisterBuiltin("url", "modules/url.js");
+  RegisterBuiltin("querystring", "modules/url.js");
+  RegisterBuiltin("assert", "modules/assert.js");
+  RegisterBuiltin("dns", "modules/net.js");
+  RegisterBuiltin("tls", "modules/net.js");
+  RegisterBuiltin("readline", "modules/readline.js");
 
   // Expose require to JS
   isolate_->SetData(0, this);
@@ -353,7 +407,7 @@ void Environment::SetupRequire() {
         info.GetReturnValue().Set(exports);
       })->GetFunction(context()).ToLocalChecked()).Check();
 
-  // Add module to global (Node.js compatibility)
+  // Add module to global for CommonJS compatibility
   v8::Local<v8::Object> module_obj = v8::Object::New(isolate_);
   module_obj->Set(context(),
       v8::String::NewFromUtf8(isolate_, "exports").ToLocalChecked(),
@@ -374,22 +428,36 @@ v8::Local<v8::Value> Environment::NativeRequire(const std::string& id) {
     return it->second.Get(isolate_);
   }
 
-  // Check built-in modules
+  // Check built-in modules.
   auto builtin = builtin_modules_.find(id);
   if (builtin != builtin_modules_.end()) {
-    v8::Local<v8::Value> exports = LoadJSFile(builtin->second);
-    module_cache_[id].Reset(isolate_, exports.As<v8::Object>());
+    std::string resolved = resource_root_ + "/" + builtin->second;
+    v8::Local<v8::Value> exports;
+    if (!LoadJSFile(resolved).ToLocal(&exports)) {
+      return v8::Undefined(isolate_);
+    }
+    if (exports->IsObject()) {
+      module_cache_[id].Reset(isolate_, exports.As<v8::Object>());
+    }
     return exports;
   }
 
-  // Relative path resolution
-  if (id[0] == '.' || id[0] == '/') {
+  // Resolve relative modules from the module that called require().
+  if (!id.empty() && (id[0] == '.' || id[0] == '/')) {
     std::string resolved = id;
-    if (id.find(".js") == std::string::npos) {
+    if (id[0] == '.') {
+      resolved = current_module_dir_ + "/" + id;
+    }
+    if (resolved.size() < 3 || resolved.substr(resolved.size() - 3) != ".js") {
       resolved += ".js";
     }
-    v8::Local<v8::Value> exports = LoadJSFile(resolved);
-    module_cache_[id].Reset(isolate_, exports.As<v8::Object>());
+    v8::Local<v8::Value> exports;
+    if (!LoadJSFile(resolved).ToLocal(&exports)) {
+      return v8::Undefined(isolate_);
+    }
+    if (exports->IsObject()) {
+      module_cache_[id].Reset(isolate_, exports.As<v8::Object>());
+    }
     return exports;
   }
 
@@ -400,59 +468,72 @@ v8::Local<v8::Value> Environment::NativeRequire(const std::string& id) {
   return v8::Undefined(isolate_);
 }
 
-v8::Local<v8::Value> Environment::LoadJSFile(const std::string& path) {
+v8::MaybeLocal<v8::Value> Environment::LoadJSFile(const std::string& path) {
   std::ifstream file(path);
   if (!file.is_open()) {
     std::string err = "Cannot find module '" + path + "'";
     isolate_->ThrowException(
         v8::String::NewFromUtf8(isolate_, err.c_str()).ToLocalChecked());
-    return v8::Undefined(isolate_);
+    return v8::MaybeLocal<v8::Value>();
   }
 
   std::stringstream buf;
   buf << file.rdbuf();
-  std::string source = buf.str();
+  const std::string source = buf.str();
 
-  v8::TryCatch try_catch(isolate_);
-  v8::Local<v8::String> source_str =
-      v8::String::NewFromUtf8(isolate_, source.c_str()).ToLocalChecked();
+  const std::string previous_module_dir = current_module_dir_;
+  const size_t slash = path.find_last_of("/\\");
+  current_module_dir_ = slash == std::string::npos ? "." : path.substr(0, slash);
+
+  v8::Context::Scope context_scope(context());
+  v8::Local<v8::Object> module_obj = v8::Object::New(isolate_);
+  v8::Local<v8::Object> exports_obj = v8::Object::New(isolate_);
+  module_obj->Set(context(), v8::String::NewFromUtf8(isolate_, "exports").ToLocalChecked(), exports_obj).Check();
+
+  const std::string wrapped =
+      "(function (exports, require, module, __filename, __dirname) { " +
+      source + " });";
+  v8::Local<v8::String> wrapped_source =
+      v8::String::NewFromUtf8(isolate_, wrapped.c_str()).ToLocalChecked();
   v8::Local<v8::String> filename_str =
       v8::String::NewFromUtf8(isolate_, path.c_str()).ToLocalChecked();
 
-  v8::ScriptOrigin origin(isolate_, filename_str);
+  v8::TryCatch try_catch(isolate_);
   v8::Local<v8::Script> script;
-  
-  if (!v8::Script::Compile(context(), source_str, &origin).ToLocal(&script)) {
-    if (try_catch.HasCaught()) {
-      PrintStackTrace(try_catch.Exception());
-    }
-    return v8::Undefined(isolate_);
+  v8::ScriptOrigin origin(isolate_, filename_str);
+  if (!v8::Script::Compile(context(), wrapped_source, &origin).ToLocal(&script)) {
+    if (try_catch.HasCaught()) PrintStackTrace(try_catch.Exception());
+    current_module_dir_ = previous_module_dir;
+    return v8::MaybeLocal<v8::Value>();
   }
 
-  v8::MaybeLocal<v8::Value> result = script->Run(context());
-  if (result.IsEmpty()) {
-    if (try_catch.HasCaught()) {
-      PrintStackTrace(try_catch.Exception());
-    }
-    return v8::Undefined(isolate_);
+  v8::Local<v8::Value> wrapper_value;
+  if (!script->Run(context()).ToLocal(&wrapper_value) || !wrapper_value->IsFunction()) {
+    if (try_catch.HasCaught()) PrintStackTrace(try_catch.Exception());
+    current_module_dir_ = previous_module_dir;
+    return v8::MaybeLocal<v8::Value>();
   }
 
-  // Return module.exports
-  v8::Local<v8::Object> global = context()->Global();
-  v8::Local<v8::Value> module_val;
-  if (global->Get(context(), 
-      v8::String::NewFromUtf8(isolate_, "module").ToLocalChecked())
-      .ToLocal(&module_val) && module_val->IsObject()) {
-    v8::Local<v8::Object> module_obj = module_val.As<v8::Object>();
-    v8::Local<v8::Value> exports;
-    if (module_obj->Get(context(),
-        v8::String::NewFromUtf8(isolate_, "exports").ToLocalChecked())
-        .ToLocal(&exports)) {
-      return exports;
-    }
+  v8::Local<v8::Function> wrapper = wrapper_value.As<v8::Function>();
+  v8::Local<v8::Value> require_value = context()->Global()->Get(
+      context(), v8::String::NewFromUtf8(isolate_, "require").ToLocalChecked()).ToLocalChecked();
+  v8::Local<v8::Value> filename_value =
+      v8::String::NewFromUtf8(isolate_, path.c_str()).ToLocalChecked();
+  v8::Local<v8::Value> dirname_value =
+      v8::String::NewFromUtf8(isolate_, current_module_dir_.c_str()).ToLocalChecked();
+  v8::Local<v8::Value> wrapper_args[] = {
+      exports_obj, require_value, module_obj, filename_value, dirname_value};
+
+  if (wrapper->Call(context(), context()->Global(), 5, wrapper_args).IsEmpty()) {
+    if (try_catch.HasCaught()) PrintStackTrace(try_catch.Exception());
+    current_module_dir_ = previous_module_dir;
+    return v8::MaybeLocal<v8::Value>();
   }
 
-  return v8::Object::New(isolate_);
+  v8::Local<v8::Value> result = module_obj->Get(
+      context(), v8::String::NewFromUtf8(isolate_, "exports").ToLocalChecked()).ToLocalChecked();
+  current_module_dir_ = previous_module_dir;
+  return v8::MaybeLocal<v8::Value>(result);
 }
 
 }  // namespace elyxion

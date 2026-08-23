@@ -1,78 +1,41 @@
-# =============================================================================
-# Elyxion CLI - Multi-stage Docker Build
-# Uses CMake instead of node-gyp for native compilation
-# =============================================================================
+# Elyxion standalone image. No Node.js, npm, or package installation is used.
+ARG V8_SDK_URL
 
-# ---- Builder Stage ----
-FROM node:22-slim AS builder
+FROM debian:bookworm-slim AS builder
+ARG V8_SDK_URL
 
-# Install build dependencies (cmake, compiler, curl for headers)
-RUN apt-get update && apt-get install -y \
-    cmake \
-    g++ \
-    make \
-    curl \
-    python3 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates cmake g++ make curl xz-utils tar \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# Copy package files first (for layer caching)
-COPY package.json package-lock.json ./
-
-# Install JavaScript dependencies (no native builds needed)
-RUN npm install --ignore-scripts
-
-# Copy source code
 COPY CMakeLists.txt ./
+COPY cmake/ ./cmake/
 COPY src/ ./src/
 COPY lib/ ./lib/
 COPY bin/ ./bin/
-COPY test/ ./test/
 COPY examples/ ./examples/
-COPY package.json package-lock.json ./
+COPY README.md LICENSE ./
 
-# Build with CMake (no node-gyp needed!)
-RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
+RUN test -n "$V8_SDK_URL" \
+    && mkdir -p /opt/v8 \
+    && curl -fsSL "$V8_SDK_URL" | tar -xJ --strip-components=1 -C /opt/v8
+
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DV8_DIR=/opt/v8 \
     && cmake --build build --config Release
 
-# Verify build succeeded
-RUN ls -la build/Release/elyxion.node 2>/dev/null || \
-    ls -la build/elyxion.node 2>/dev/null || \
-    (echo "Build failed - .node file not found" && exit 1)
-
-# Run tests
-RUN node test/basic.test.js
-
-# ---- Production Stage ----
-FROM node:22-slim AS production
-
-# Install minimal runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libstdc++6 \
-    curl \
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# Copy built addon and JavaScript files
-COPY --from=builder /app/build/Release/elyxion.node ./build/Release/ 2>/dev/null || true
-COPY --from=builder /app/build/elyxion.node ./build/ 2>/dev/null || true
-COPY --from=builder /app/lib ./lib
-COPY --from=builder /app/bin ./bin
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/package-lock.json ./
+COPY --from=builder /app/build/elyxion ./elyxion
+COPY --from=builder /app/runtime/lib ./lib
+COPY --from=builder /app/bin/elyx ./elyx
+COPY --from=builder /app/bin/elyx.cmd ./elyx.cmd
 COPY --from=builder /app/examples ./examples
+RUN chmod +x /app/elyxion /app/elyx
+ENV PATH="/app:${PATH}"
 
-# Make binaries executable
-RUN chmod +x bin/*
-
-# Set PATH
-ENV PATH="/app/bin:${PATH}"
-
-# Verify installation
-RUN node bin/elyxion --version
-
-# Default command
-CMD ["node", "bin/elyxion", "--version"]
+RUN /app/elyxion --version
+CMD ["/app/elyxion", "--version"]

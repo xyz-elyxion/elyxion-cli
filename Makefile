@@ -1,178 +1,67 @@
-.PHONY: all build clean test install uninstall help
+.PHONY: all build clean test install help repl hello server crypto fs timers init elyx-install elyx-publish elyx-login
 
-# =============================================================================
-# Elyxion CLI - Build System using CMake
-# =============================================================================
-
-# Default build type
 BUILD_TYPE ?= Release
 
-# Default target
 all: build
 
-# ---- Build Commands ----
-
-# Build native addon using CMake
 build:
-	@echo "Building elyxion with CMake..."
-	cmake -B build -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
+	cmake -B build -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DV8_DIR="$(V8_DIR)" -DLIBUV_DIR="$(LIBUV_DIR)"
 	cmake --build build --config $(BUILD_TYPE)
-	@echo "Build complete! Output: build/Release/elyxion.node"
+	@echo "Build complete: build/elyxion"
 
-# Clean build artifacts
 clean:
-	@echo "Cleaning build artifacts..."
-	rm -rf build/
-	rm -rf CMakeFiles/
-	rm -f CMakeCache.txt
-	rm -f cmake_install.cmake
-	rm -f Makefile
-	@echo "Clean complete!"
+	rm -rf build
 
-# Full clean (includes node_modules)
-distclean: clean
-	rm -rf node_modules/
+install: build
+	cmake --install build
 
-# ---- Test Commands ----
+# Runtime smoke tests. A V8 SDK must be supplied to CMake for the build.
+test: build
+	./build/elyxion --version
+	./build/elyxion --help
+	./build/elyxion examples/hello.js
+	./build/elyxion test/basic.test.js
 
-# Run tests
-test:
-	@echo "Running tests..."
-	node test/basic.test.js
+repl: build
+	./build/elyxion --repl
 
-# Run tests with verbose output
-test-verbose:
-	@echo "Running tests (verbose)..."
-	node test/basic.test.js --verbose
+hello: build
+	./build/elyxion examples/hello.js
 
-# ---- Development Commands ----
+server: build
+	./build/elyxion examples/server.js
 
-# Install npm dependencies
-install:
-	npm install
+crypto: build
+	./build/elyxion examples/crypto.js
 
-# Install globally via npm link
-link:
-	npm link
+fs: build
+	./build/elyxion examples/fs.js
 
-# Unlink global installation
-unlink:
-	npm unlink -g elyxion-cli
+timers: build
+	./build/elyxion examples/timers.js
 
-# Start REPL
-repl:
-	./bin/elyxion --repl
-
-# Run examples
-hello:
-	./bin/elyxion examples/hello.js
-
-server:
-	./bin/elyxion examples/server.js
-
-crypto:
-	./bin/elyxion examples/crypto.js
-
-fs:
-	./bin/elyxion examples/fs.js
-
-timers:
-	./bin/elyxion examples/timers.js
-
-# ---- Package Manager Commands ----
-
-# Initialize a new package
-init:
+init: build
 	./bin/elyx init
 
-# Install package via elyx
-elyx-install:
+elyx-install: build
 	./bin/elyx install $(PKG)
 
-# Publish package via elyx
-elyx-publish:
+elyx-publish: build
 	./bin/elyx publish
 
-# Login to registry
-elyx-login:
+elyx-login: build
 	./bin/elyx login
 
-# ---- Docker Commands ----
-
-# Build Docker image
-docker-build:
-	docker build -t elyxion-cli .
-
-# Run in Docker
-docker-run:
-	docker run --rm elyxion-cli elyxion --version
-
-# Start Docker Compose
-docker-up:
-	docker-compose up -d
-
-# Stop Docker Compose
-docker-down:
-	docker-compose down
-
-# ---- Code Quality Commands ----
-
-# Format JavaScript files
-format:
-	find lib/ -name "*.js" -exec prettier --write {} \; 2>/dev/null || echo "prettier not installed"
-
-# Lint JavaScript files
-lint:
-	@echo "Checking JavaScript syntax..."
-	find lib/ -name "*.js" -exec node --check {} \;
-	@echo "Syntax check passed!"
-
-# Check C++ syntax (requires clang-tidy)
-lint-cpp:
-	@echo "Checking C++ syntax..."
-	clang-tidy src/core/*.cc src/loop/*.cc -- -std=c++17 2>/dev/null || echo "clang-tidy not available"
-
-# ---- Documentation Commands ----
-
-# Generate documentation
-docs:
-	@echo "Documentation generation not implemented yet"
-
-# Show help
 help:
+	@echo "Elyxion standalone build"
+	@echo "  make build       Build the native executable"
+	@echo "  make install     Install elyxion and elyx"
+	@echo "  make test        Run runtime smoke tests"
+	@echo "  make repl        Start the REPL"
+	@echo "  make hello       Run the hello example"
+	@echo "  make clean       Remove build output"
 	@echo ""
-	@echo "╔══════════════════════════════════════════════════════════╗"
-	@echo "║            Elyxion CLI - Build System                   ║"
-	@echo "╠══════════════════════════════════════════════════════════╣"
-	@echo "║                                                          ║"
-	@echo "║  Build Commands:                                         ║"
-	@echo "║    make build          Build native addon (CMake)       ║"
-	@echo "║    make clean          Clean build artifacts            ║"
-	@echo "║    make distclean      Clean everything                 ║"
-	@echo "║    make test           Run tests                        ║"
-	@echo "║                                                          ║"
-	@echo "║  Development:                                            ║"
-	@echo "║    make repl           Start REPL                       ║"
-	@echo "║    make hello          Run hello example                ║"
-	@echo "║    make server         Run server example               ║"
-	@echo "║    make crypto         Run crypto example               ║"
-	@echo "║    make fs             Run fs example                   ║"
-	@echo "║    make timers         Run timers example               ║"
-	@echo "║                                                          ║"
-	@echo "║  Package Manager:                                        ║"
-	@echo "║    make init           Initialize new package           ║"
-	@echo "║    make elyx-install PKG=<name>  Install package        ║"
-	@echo "║    make elyx-publish   Publish package                  ║"
-	@echo "║    make elyx-login     Login to registry                ║"
-	@echo "║                                                          ║"
-	@echo "║  Docker:                                                 ║"
-	@echo "║    make docker-build   Build Docker image               ║"
-	@echo "║    make docker-run     Run in Docker                    ║"
-	@echo "║    make docker-up      Start Docker Compose             ║"
-	@echo "║    make docker-down    Stop Docker Compose              ║"
-	@echo "║                                                          ║"
-	@echo "║  Options:                                                ║"
-	@echo "║    BUILD_TYPE=Debug make build  Build with debug info   ║"
-	@echo "║                                                          ║"
-	@echo "╚══════════════════════════════════════════════════════════╝"
-	@echo ""
+	@echo "Optional variables:"
+	@echo "  BUILD_TYPE=Debug"
+	@echo "  V8_DIR=/path/to/standalone-v8-sdk"
+	@echo "  LIBUV_DIR=/path/to/libuv"

@@ -4,29 +4,41 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
 #include <libplatform/libplatform.h>
 #include <uv.h>
 
 namespace elyxion {
 
 static uv_loop_t* default_loop = nullptr;
-#ifndef ELYXION_AS_ADDON
+
+static std::string ResourceRoot(const char* executable) {
+  const std::filesystem::path executable_path = std::filesystem::absolute(executable).parent_path();
+  const std::filesystem::path candidates[] = {
+      std::filesystem::path(ELYXION_BUILD_RESOURCE_DIR),
+      std::filesystem::path(ELYXION_SOURCE_DIR) / "lib",
+      executable_path / "lib",
+      executable_path.parent_path() / "lib",
+      std::filesystem::current_path() / "lib"};
+  for (const auto& candidate : candidates) {
+    if (std::filesystem::exists(candidate / "bootstrap.js")) {
+      return candidate.string();
+    }
+  }
+  return std::filesystem::path(ELYXION_SOURCE_DIR).append("lib").string();
+}
+
 static std::unique_ptr<v8::Platform> platform;
-#endif
 
 void InitPlatform() {
-#ifndef ELYXION_AS_ADDON
   platform = v8::platform::NewDefaultPlatform();
   v8::V8::InitializePlatform(platform.get());
   v8::V8::Initialize();
-#endif
 }
 
 void TearDownPlatform() {
-#ifndef ELYXION_AS_ADDON
   v8::V8::Dispose();
   v8::V8::DisposePlatform();
-#endif
 }
 
 
@@ -50,31 +62,38 @@ static bool ExecuteFileContent(Environment& env, const std::string& source_str,
   v8::TryCatch try_catch(isolate);
   v8::MaybeLocal<v8::Value> result = env.ExecuteString(source, fname);
   
-  if (result.IsEmpty() && try_catch.HasCaught()) {
-    env.PrintStackTrace(try_catch.Exception());
+  if (result.IsEmpty()) {
+    if (try_catch.HasCaught()) env.PrintStackTrace(try_catch.Exception());
     return false;
   }
   return true;
 }
 
 int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) {
-#ifndef ELYXION_AS_ADDON
   InitPlatform();
-#endif
+  std::unique_ptr<v8::ArrayBuffer::Allocator> allocator(
+      params->array_buffer_allocator);
   
   // Parse command line arguments
   bool run_interactive = false;
+  bool print_result = false;
   std::string eval_string;
   std::string filename;
   std::string require_module;
+  bool package_manager = false;
   
   for (int i = 1; i < argc; i++) {
     std::string arg(argv[i]);
     
-    if (arg == "-e" || arg == "--eval") {
+    if (arg == "--package-manager") {
+      package_manager = true;
+    } else if (arg == "-e" || arg == "--eval") {
       if (i + 1 < argc) {
         eval_string = argv[++i];
       }
+    } else if (arg == "-p" || arg == "--print") {
+      print_result = true;
+      if (i + 1 < argc) eval_string = argv[++i];
     } else if (arg == "-r" || arg == "--require") {
       if (i + 1 < argc) {
         require_module = argv[++i];
@@ -83,15 +102,16 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       run_interactive = true;
     } else if (arg == "--repl") {
       run_interactive = true;
-    } else if (arg == "-v" || arg == "--version") {
+    } else if ((arg == "-v" || arg == "--version") && !package_manager) {
       std::cout << "elyxion v" << ELYXION_VERSION_STRING << std::endl;
       TearDownPlatform();
       return 0;
-    } else if (arg == "-h" || arg == "--help") {
+    } else if ((arg == "-h" || arg == "--help") && !package_manager) {
       std::cout << "Usage: elyxion [options] [script.js | -e \"code\"]" << std::endl;
       std::cout << std::endl;
       std::cout << "Options:" << std::endl;
       std::cout << "  -e, --eval <code>     Evaluate code" << std::endl;
+      std::cout << "  -p, --print <code>    Evaluate and print result" << std::endl;
       std::cout << "  -r, --require <mod>   Require module before script" << std::endl;
       std::cout << "  -i, --interactive     Start REPL" << std::endl;
       std::cout << "  -v, --version         Print version" << std::endl;
@@ -104,7 +124,7 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       TearDownPlatform();
       return 0;
     } else if (arg[0] != '-') {
-      filename = arg;
+      if (filename.empty()) filename = arg;
     }
   }
   
@@ -117,7 +137,7 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
     v8::HandleScope handle_scope(isolate);
     
     // Create environment
-    Environment env(isolate, default_loop);
+    Environment env(isolate, default_loop, ResourceRoot(argv[0]));
     
     // Initialize
     if (!env.Initialize(filename)) {
@@ -127,15 +147,17 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       TearDownPlatform();
       return 1;
     }
+    env.SetArgv(argc, argv);
     
     // Load bootstrap JS from disk (provides EventEmitter, Buffer, etc.)
     // After this, overwrite require with the C++ native version
     {
-      std::ifstream bootstrap_file("lib/bootstrap.js");
+      const std::string bootstrap_path = ResourceRoot(argv[0]) + "/bootstrap.js";
+      std::ifstream bootstrap_file(bootstrap_path);
       if (bootstrap_file.is_open()) {
         std::stringstream bbuf;
         bbuf << bootstrap_file.rdbuf();
-        if (!ExecuteFileContent(env, bbuf.str(), "lib/bootstrap.js")) {
+        if (!ExecuteFileContent(env, bbuf.str(), bootstrap_path)) {
           std::cerr << "Failed to bootstrap runtime" << std::endl;
         }
         // Override require with C++ native version
@@ -151,23 +173,48 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
     }
     
     // Execute code or script
-    if (!eval_string.empty()) {
-      ExecuteFileContent(env, eval_string, "[eval]");
+    if (package_manager) {
+      if (!ExecuteFileContent(env, "require('./pkg/cli.js').run(process.argv.slice(2));", "[elyx]")) {
+        std::cerr << "elyx: package manager is unavailable" << std::endl;
+        isolate->Dispose();
+        uv_loop_close(default_loop);
+        TearDownPlatform();
+        return 1;
+      }
+    } else if (!eval_string.empty()) {
+      if (print_result) {
+        v8::Local<v8::String> source = v8::String::NewFromUtf8(isolate, eval_string.c_str()).ToLocalChecked();
+        v8::Local<v8::String> name = v8::String::NewFromUtf8(isolate, "[eval]").ToLocalChecked();
+        if (env.ExecuteString(source, name, true).IsEmpty()) {
+          isolate->Dispose();
+          uv_loop_close(default_loop);
+          TearDownPlatform();
+          return 1;
+        }
+      } else {
+        if (!ExecuteFileContent(env, eval_string, "[eval]")) {
+          isolate->Dispose();
+          uv_loop_close(default_loop);
+          TearDownPlatform();
+          return 1;
+        }
+      }
       
     } else if (!filename.empty()) {
-      // Read file
-      std::ifstream file(filename);
-      if (!file.is_open()) {
+      if (!std::filesystem::exists(filename)) {
         std::cerr << "elyxion: cannot open file '" << filename << "'" << std::endl;
         isolate->Dispose();
         uv_loop_close(default_loop);
         TearDownPlatform();
         return 1;
       }
-      
-      std::stringstream buffer;
-      buffer << file.rdbuf();
-      ExecuteFileContent(env, buffer.str(), filename);
+      v8::Local<v8::Value> script_result;
+      if (!env.LoadJSFile(std::filesystem::absolute(filename).string()).ToLocal(&script_result)) {
+        isolate->Dispose();
+        uv_loop_close(default_loop);
+        TearDownPlatform();
+        return 1;
+      }
       
     } else if (run_interactive) {
       // Start REPL
@@ -206,6 +253,10 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
         
         env.ExecuteString(source, filename_str, true);
       }
+    } else if (uv_guess_handle(0) != UV_TTY) {
+      std::stringstream stdin_buffer;
+      stdin_buffer << std::cin.rdbuf();
+      ExecuteFileContent(env, stdin_buffer.str(), "[stdin]");
     }
     
     // Run the event loop
@@ -217,7 +268,7 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
   uv_loop_close(default_loop);
   TearDownPlatform();
   
-  delete params->array_buffer_allocator;
+  params->array_buffer_allocator = nullptr;
   
   return 0;
 }
@@ -235,8 +286,6 @@ v8::MaybeLocal<v8::Promise> PromiseResolve(v8::Local<v8::Context> context,
 }  // namespace elyxion
 
 // Main entry point (only for standalone builds, not for addon builds)
-#ifndef ELYXION_AS_ADDON
 int main(int argc, char* argv[]) {
   return elyxion::Start(argc, argv);
 }
-#endif

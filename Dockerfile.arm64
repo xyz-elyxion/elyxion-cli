@@ -1,36 +1,40 @@
-# =============================================================================
-# Elyxion CLI - ARM64 Docker Build
-# Uses QEMU for cross-compilation
-# =============================================================================
+# Elyxion standalone ARM64 image. No Node.js or npm is required.
+ARG V8_SDK_URL
 
-FROM --platform=linux/arm64 node:22-slim
+FROM --platform=linux/arm64 debian:bookworm-slim AS builder
+ARG V8_SDK_URL
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    cmake \
-    g++ \
-    make \
-    curl \
-    python3 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates cmake g++ make curl xz-utils tar \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# Copy source files
 COPY CMakeLists.txt ./
+COPY cmake/ ./cmake/
 COPY src/ ./src/
 COPY lib/ ./lib/
 COPY bin/ ./bin/
-COPY package.json package-lock.json ./
+COPY examples/ ./examples/
+COPY README.md LICENSE ./
 
-# Install dependencies
-RUN npm install --ignore-scripts
+RUN test -n "$V8_SDK_URL" \
+    && mkdir -p /opt/v8 \
+    && curl -fsSL "$V8_SDK_URL" | tar -xJ --strip-components=1 -C /opt/v8
 
-# Build with CMake
-RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DV8_DIR=/opt/v8 \
     && cmake --build build --config Release
 
-# Verify build
-RUN ls -la build/Release/ 2>/dev/null || ls -la build/
+FROM --platform=linux/arm64 debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-CMD ["echo", "ARM64 build complete"]
+WORKDIR /app
+COPY --from=builder /app/build/elyxion ./elyxion
+COPY --from=builder /app/runtime/lib ./lib
+COPY --from=builder /app/bin/elyx ./elyx
+COPY --from=builder /app/bin/elyx.cmd ./elyx.cmd
+COPY --from=builder /app/examples ./examples
+RUN chmod +x /app/elyxion /app/elyx
+ENV PATH="/app:${PATH}"
+
+CMD ["/app/elyxion", "--version"]

@@ -12,7 +12,7 @@ namespace elyxion {
 
 class Environment {
  public:
-  Environment(v8::Isolate* isolate, uv_loop_t* loop);
+  Environment(v8::Isolate* isolate, uv_loop_t* loop, const std::string& resource_root);
   ~Environment();
 
   // Disable copy
@@ -22,6 +22,7 @@ class Environment {
   // Initialization
   bool Initialize(const std::string& main_script);
   bool Run();
+  void SetArgv(int argc, char* argv[]);
 
   // Getters
   v8::Isolate* isolate() const { return isolate_; }
@@ -46,7 +47,7 @@ class Environment {
   // Module system (standalone builds)
   void SetupRequire();
   v8::Local<v8::Value> NativeRequire(const std::string& id);
-  v8::Local<v8::Value> LoadJSFile(const std::string& path);
+  v8::MaybeLocal<v8::Value> LoadJSFile(const std::string& path);
   void RegisterBuiltin(const std::string& name, const std::string& path);
 
  private:
@@ -58,6 +59,8 @@ class Environment {
   // Data
   v8::Isolate* isolate_;
   uv_loop_t* loop_;
+  std::string resource_root_;
+  std::string current_module_dir_;
   v8::HandleScope handle_scope_;
   v8::Global<v8::Context> context_;
   bool running_;

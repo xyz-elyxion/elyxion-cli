@@ -5,55 +5,35 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
+env:
+  V8_SDK_URL: ${{ vars.V8_SDK_URL }}
+
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js 22.x
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22.x
-
-    - name: Install Dependencies
-      shell: bash
-      run: npm install --ignore-scripts
-
-    # ---- Linux / macOS Build ----
-    - name: Build (Linux/macOS)
-      if: runner.os != 'Windows'
-      run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release
-        cmake --build build --config Release
-
-    # ---- Windows Build ----
-    - name: Build (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        cmake -B build -A x64
-        cmake --build build --config Release
-
-    - name: Upload Build
-      uses: actions/upload-artifact@v4
-      with:
-        name: elyxion-${{ runner.os }}-nightly
-        path: |
-          build/Release/elyxion.node
-          build/elyxion.node
-
-  summary:
     runs-on: ubuntu-latest
-    needs: build
     steps:
-    - name: Nightly Build Complete
-      run: |
-        echo "🌙 Nightly build completed successfully"
-        echo "Date: $(date -u)"
-        echo "Artifacts available in GitHub Actions"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools and V8 SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ make curl xz-utils tar
+          test -n "$V8_SDK_URL"
+          mkdir -p "$RUNNER_TEMP/v8"
+          curl -fsSL "$V8_SDK_URL" | tar -xJ --strip-components=1 -C "$RUNNER_TEMP/v8"
+
+      - name: Build standalone runtime
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DV8_DIR="$RUNNER_TEMP/v8"
+          cmake --build build --config Release
+          ./build/elyxion --version
+          ./build/elyxion examples/hello.js
+
+      - name: Upload runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: elyxion-linux-nightly
+          path: |
+            build/elyxion
+            build/runtime/lib

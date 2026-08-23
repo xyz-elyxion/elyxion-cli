@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        V8_SDK_URL: ${V8_SDK_URL}
     image: elyxion-cli:latest
     container_name: elyxion-cli
     stdin_open: true
@@ -12,8 +14,6 @@ services:
     volumes:
       - ./examples:/app/examples
       - ./lib:/app/lib
-    environment:
-      - NODE_ENV=development
     networks:
       - elyxion-network
 
@@ -22,6 +22,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        V8_SDK_URL: ${V8_SDK_URL}
     image: elyxion-cli:latest
     container_name: elyxion-server
     command: elyxion /app/examples/server.js

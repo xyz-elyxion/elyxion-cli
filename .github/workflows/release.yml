@@ -7,11 +7,12 @@ on:
 
 permissions:
   contents: write
-  packages: write
+
+env:
+  V8_SDK_URL: ${{ vars.V8_SDK_URL }}
 
 jobs:
-  # ---- Standalone Native Builds (Linux / macOS) ----
-  build-standalone:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -20,183 +21,95 @@ jobs:
           - os: ubuntu-latest
             artifact: elyxion-linux-x64
           - os: macos-latest
-            artifact: elyxion-macos-universal
-            # macOS universal: we build both archs separately and lipo
+            artifact: elyxion-macos
+          - os: windows-latest
+            artifact: elyxion-windows-x64
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Node.js 22.x
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22.x
+      - name: Install Unix tools and V8 SDK
+        if: runner.os != 'Windows'
+        run: |
+          test -n "$V8_SDK_URL"
+          brew install cmake || true
+          mkdir -p "$RUNNER_TEMP/v8"
+          curl -fsSL "$V8_SDK_URL" | tar -xJ --strip-components=1 -C "$RUNNER_TEMP/v8"
 
-    # ---- Linux standalone build ----
-    - name: Build Standalone (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release -DELYXION_AS_ADDON=OFF
-        cmake --build build --config Release
-        mkdir -p dist
-        cp build/elyxion dist/
-        cp -r lib dist/
-        cp package.json README.md dist/ 2>/dev/null || true
-        # Copy libnode next to the binary
-        cp build/_deps/node_dist-src/lib/libnode.so.* dist/ 2>/dev/null || true
-        find /usr/local -name "libnode.so*" -exec cp {} dist/ \; 2>/dev/null || true
+      - name: Install Windows V8 SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not $env:V8_SDK_URL) { throw "V8_SDK_URL is not configured" }
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\v8" | Out-Null
+          Invoke-WebRequest -Uri $env:V8_SDK_URL -OutFile "$env:RUNNER_TEMP\v8.tar.xz"
+          tar -xf "$env:RUNNER_TEMP\v8.tar.xz" -C "$env:RUNNER_TEMP\v8" --strip-components=1
 
-    - name: Package (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        tar -czf elyxion-linux-x64.tar.gz -C dist .
+      - name: Configure Unix
+        if: runner.os != 'Windows'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DV8_DIR="$RUNNER_TEMP/v8"
 
-    - name: Upload Artifact (Linux)
-      if: runner.os == 'Linux'
-      uses: actions/upload-artifact@v4
-      with:
-        name: elyxion-linux-x64
-        path: elyxion-linux-x64.tar.gz
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        run: cmake -B build -A x64 -DV8_DIR="$env:RUNNER_TEMP\v8"
 
-    # ---- macOS universal standalone build ----
-    - name: Build x64 Standalone (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        cmake -B build-x64 -DCMAKE_BUILD_TYPE=Release -DELYXION_AS_ADDON=OFF -DCMAKE_OSX_ARCHITECTURES=x86_64
-        cmake --build build-x64 --config Release
+      - name: Build
+        run: cmake --build build --config Release
 
-    - name: Build arm64 Standalone (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        cmake -B build-arm64 -DCMAKE_BUILD_TYPE=Release -DELYXION_AS_ADDON=OFF -DCMAKE_OSX_ARCHITECTURES=arm64
-        cmake --build build-arm64 --config Release
+      - name: Assemble Unix archive
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/bin dist/lib
+          cp build/elyxion dist/elyxion.bin
+          cp -r build/runtime/lib/. dist/lib/
+          cp bin/elyx dist/bin/
+          cp bin/elyxion dist/bin/
+          cp bin/elyxion.cmd bin/elyx.cmd dist/bin/
+          cp README.md LICENSE dist/
+          tar -czf "${{ matrix.artifact }}.tar.gz" -C dist .
 
-    - name: Create Universal Binary (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        mkdir -p dist
-        lipo -create build-x64/elyxion build-arm64/elyxion -output dist/elyxion
-        cp -r lib dist/
-        cp package.json README.md dist/ 2>/dev/null || true
-        # Copy universal libnode too
-        lipo -create \
-          build-x64/_deps/node_dist-src/lib/libnode.127.dylib \
-          build-arm64/_deps/node_dist-src/lib/libnode.127.dylib \
-          -output dist/libnode.127.dylib 2>/dev/null || \
-        find build-x64/_deps/node_dist-src -name "libnode*.dylib" -exec cp {} dist/ \; 2>/dev/null || true
+      - name: Assemble Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dist = "${{ matrix.artifact }}"
+          New-Item -ItemType Directory -Force "$dist\bin", "$dist\lib" | Out-Null
+          Copy-Item build\Release\elyxion.exe "$dist\bin\"
+          Copy-Item -Recurse build\runtime\lib\* "$dist\lib\"
+          Copy-Item bin\elyx.cmd, bin\elyxion.cmd "$dist\bin\"
+          Copy-Item README.md, LICENSE "$dist\"
+          Compress-Archive -Path $dist -DestinationPath "${{ matrix.artifact }}.zip"
 
-    - name: Package (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        tar -czf elyxion-macos-universal.tar.gz -C dist .
+      - name: Upload Unix archive
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
 
-    - name: Upload Artifact (macOS)
-      if: runner.os == 'macOS'
-      uses: actions/upload-artifact@v4
-      with:
-        name: elyxion-macos-universal
-        path: elyxion-macos-universal.tar.gz
+      - name: Upload Windows archive
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
 
-  # ---- Windows Standalone Build ----
-  build-windows:
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    # Cache V8 build (keyed by version + platform)
-    - name: Cache V8 Build
-      id: cache-v8
-      uses: actions/cache@v4
-      with:
-        path: |
-          build/v8
-        key: v8-12.2.282-windows-x64-v1
-
-    - name: Build V8 (if not cached)
-      if: steps.cache-v8.outputs.cache-hit != 'true'
-      shell: pwsh
-      run: |
-        Write-Host "Building V8 from source (first time only, ~90 min)..."
-        .\scripts\build-v8.ps1 -Version "12.2.282" -OutDir "$PWD\build\v8"
-      timeout-minutes: 180
-
-    - name: Build Elyxion Standalone
-      run: |
-        cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DELYXION_AS_ADDON=OFF -DV8_DIR="$PWD\build\v8"
-        cmake --build build --config Release
-
-    - name: Assemble Windows Distribution
-      shell: bash
-      run: |
-        DIST=elyxion-windows-x64
-        mkdir -p "$DIST"
-        cp build/Release/elyxion.exe "$DIST/"
-        cp -r lib "$DIST/"
-        cp package.json README.md "$DIST/" 2>/dev/null || true
-
-    - name: Package (Windows)
-      run: Compress-Archive -Path elyxion-windows-x64 -DestinationPath elyxion-windows-x64.zip
-
-    - name: Upload Artifact (Windows)
-      uses: actions/upload-artifact@v4
-      with:
-        name: elyxion-windows-x64
-        path: elyxion-windows-x64.zip
-
-  release:
+  publish:
     runs-on: ubuntu-latest
-    needs: [build-standalone, build-windows]
-    permissions:
-      contents: write
-
+    needs: build
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
-    - name: Download All Artifacts
-      uses: actions/download-artifact@v4
-
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          elyxion-linux-x64/elyxion-linux-x64.tar.gz
-          elyxion-macos-universal/elyxion-macos-universal.tar.gz
-          elyxion-windows-x64/elyxion-windows-x64.zip
-        generate_release_notes: true
-        draft: false
-        prerelease: false
-        fail_on_unmatched_files: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ---- Publish to Elyxion Registry ----
-  publish-registry:
-    runs-on: ubuntu-latest
-    needs: release
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js 22.x
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22.x
-
-    - name: Login to Elyxion Registry
-      run: node bin/elyx login
-      env:
-        ELYX_TOKEN: ${{ secrets.ELYX_TOKEN }}
-
-    - name: Publish to Elyxion Registry
-      run: node bin/elyx publish --tag latest
-      env:
-        ELYX_TOKEN: ${{ secrets.ELYX_TOKEN }}
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

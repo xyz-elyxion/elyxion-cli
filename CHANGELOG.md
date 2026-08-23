@@ -100,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Crypto module uses simplified implementations
 - HTTP server is basic (no keep-alive, etc.)
 - Package manager requires GitHub authentication for publishing
-- No npm registry compatibility (uses custom GitHub-based registry)
+- The package manager uses the custom GitHub-based registry and is independent of npm
 
 ---
 
@@ -113,7 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Release Process
 
-1. Update version in `package.json`
+1. Update the version constants in the native runtime and release metadata
 2. Update `CHANGELOG.md` with new version
 3. Create git tag: `git tag v1.0.0`
 4. Push changes: `git push && git push --tags`
