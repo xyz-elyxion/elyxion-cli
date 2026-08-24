@@ -98,18 +98,13 @@ endif()
 # ---- Platform-Specific Configuration ----
 
 if(WIN32)
-    # These libraries are part of the Windows SDK. Resolve them explicitly so
-    # CMake does not pass a NOTFOUND value to the linker on newer VS images.
-    foreach(_elyxion_win_library IN ITEMS WINMM DBGHELP SHLWAPI)
-        find_library(${_elyxion_win_library}_LIBRARY NAMES ${_elyxion_win_library})
-        if(NOT ${_elyxion_win_library}_LIBRARY)
-            message(FATAL_ERROR "Windows SDK library ${_elyxion_win_library} was not found")
-        endif()
-    endforeach()
+    # MSVC resolves these Windows SDK import libraries by name through the
+    # developer command prompt configured by the Visual Studio generator.
+    # Using names directly avoids CMake's fragile find_library search here.
     target_link_libraries(elyxion PRIVATE
-        ${WINMM_LIBRARY}
-        ${DBGHELP_LIBRARY}
-        ${SHLWAPI_LIBRARY}
+        winmm
+        dbghelp
+        shlwapi
         ws2_32 userenv iphlpapi psapi
     )
     target_compile_options(elyxion PRIVATE /W3 /EHsc /wd4100 /wd4127 /wd4324 /wd4505 /wd4512)
