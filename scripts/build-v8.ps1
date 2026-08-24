@@ -8,7 +8,7 @@
 # Cached run: ~5-10 minutes
 
 param(
-    [string]$Version = "12.2.282",
+    [string]$Version = "12.2.281.28",
     [string]$OutDir = "$PSScriptRoot\..\build\v8",
     [string]$CacheDir = "$env:USERPROFILE\.v8-cache"
 )
@@ -21,7 +21,7 @@ Write-Host "Output:  $OutDir"
 Write-Host ""
 
 # ---- Helper: Check cache ----
-$cacheKey = "v8-$Version-windows-x64"
+$cacheKey = "v8-$Version-windows-x64-nosandbox-nopointercompression-clean"
 $cachedBuild = Join-Path $CacheDir $cacheKey
 
 if (Test-Path "$cachedBuild\include\v8.h" -PathType Leaf) {
@@ -43,17 +43,20 @@ if (-not (Test-Path "$depotToolsDir\gclient.bat")) {
 $env:PATH = "$depotToolsDir;$env:PATH"
 $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
 
-# ---- Clone V8 ----
+# ---- Clone V8 and configure dependencies ----
 $v8Src = Join-Path $CacheDir "v8-src"
+$v8Root = Join-Path $v8Src "v8"
 if (-not (Test-Path "$v8Src\.gclient")) {
-    Write-Host "Cloning V8 (this takes a while)..."
-    Push-Location $CacheDir
-    # Use fetch to get V8 with dependencies
-    & cmd /c "fetch v8 2>&1"
+    Write-Host "Cloning V8 from https://chromium.googlesource.com/v8/v8 (this takes a while)..."
+    Remove-Item -Recurse -Force $v8Src -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $v8Src | Out-Null
+    Push-Location $v8Src
+    git clone https://chromium.googlesource.com/v8/v8 v8
+    gclient config https://chromium.googlesource.com/v8/v8
     Pop-Location
 }
 
-Push-Location $v8Src
+Push-Location $v8Root
 
 # ---- Checkout version ----
 Write-Host "Checking out V8 $Version..."
@@ -63,10 +66,15 @@ if ($LASTEXITCODE -ne 0) {
     # Try branch head format
     git checkout "branch-heads/$Version" -B "elyxion-$Version" 2>$null
 }
+Pop-Location
 
-# ---- Sync dependencies ----
+# ---- Sync dependencies for the selected revision ----
+Push-Location $v8Src
 Write-Host "Syncing dependencies..."
 gclient sync -D 2>&1 | Select-Object -Last 5
+Pop-Location
+
+Push-Location $v8Root
 
 # ---- Generate build ----
 $gnArgs = @(
@@ -75,6 +83,8 @@ $gnArgs = @(
     'is_clang = false',
     'use_custom_libcxx = false',
     'v8_monolithic = true',
+    'v8_enable_sandbox = false',
+    'v8_enable_pointer_compression = false',
     'v8_use_external_startup_data = false',
     'v8_enable_i18n_support = false',
     'treat_warnings_as_errors = false',
@@ -85,6 +95,8 @@ $gnArgs = @(
 $buildDir = "out\x64.release"
 
 Write-Host "Generating build files..."
+# GN argument changes are ABI-sensitive; do not mix objects from profiles.
+Remove-Item -Recurse -Force $buildDir -ErrorAction SilentlyContinue
 & gn gen $buildDir --args="$gnArgs"
 
 # ---- Build ----
@@ -93,25 +105,22 @@ Write-Host "Building V8 (this takes 30-90 minutes)..."
 
 # ---- Collect output ----
 Write-Host "Collecting build artifacts..."
-$artifacts = @(
-    "$buildDir\v8_monolith.lib",
-    "$buildDir\v8_monolith.dll.lib"
-)
-
 $includeDir = Join-Path $OutDir "include"
 Remove-Item -Recurse -Force $OutDir -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
 
 # Copy headers
-Copy-Item -Recurse "$v8Src\include\*" "$includeDir\" -Force
+Copy-Item -Recurse "$v8Root\include\*" "$includeDir\" -Force
 
-# Copy libraries
-foreach ($lib in $artifacts) {
-    if (Test-Path $lib) {
-        Copy-Item $lib $OutDir -Force
-    }
+# Copy the monolithic library. GN may place it directly in the build
+# directory or under obj/, depending on the V8 revision/toolchain.
+$library = Get-ChildItem -Path $buildDir -Recurse -File -Filter "v8_monolith*.lib" |
+    Select-Object -First 1
+if (-not $library) {
+    throw "V8 monolithic library was not found under $buildDir"
 }
+Copy-Item $library.FullName (Join-Path $OutDir "v8_monolith.lib") -Force
 
 # Copy DLLs if any
 $dlls = @(

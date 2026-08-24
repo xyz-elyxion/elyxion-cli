@@ -299,6 +299,7 @@ v8::MaybeLocal<v8::Value> Environment::ExecuteString(
     v8::Local<v8::Value> filename,
     bool print_result) {
   
+  v8::Context::Scope context_scope(context());
   v8::TryCatch try_catch(isolate_);
   
   v8::ScriptOrigin origin(isolate_, filename);

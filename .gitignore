@@ -1,0 +1,5 @@
+# Local standalone V8 SDK (headers + v8_monolith)
+.v8/
+
+# CMake build output
+build/

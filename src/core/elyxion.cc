@@ -131,8 +131,9 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
   // Create isolate and event loop
   v8::Isolate* isolate = v8::Isolate::New(*params);
   default_loop = uv_default_loop();
+  int exit_code = 0;
   
-  {
+  do {
     v8::Isolate::Scope isolate_scope(isolate);
     v8::HandleScope handle_scope(isolate);
     
@@ -142,10 +143,8 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
     // Initialize
     if (!env.Initialize(filename)) {
       std::cerr << "Failed to initialize elyxion" << std::endl;
-      isolate->Dispose();
-      uv_loop_close(default_loop);
-      TearDownPlatform();
-      return 1;
+      exit_code = 1;
+      break;
     }
     env.SetArgv(argc, argv);
     
@@ -176,44 +175,34 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
     if (package_manager) {
       if (!ExecuteFileContent(env, "require('./pkg/cli.js').run(process.argv.slice(2));", "[elyx]")) {
         std::cerr << "elyx: package manager is unavailable" << std::endl;
-        isolate->Dispose();
-        uv_loop_close(default_loop);
-        TearDownPlatform();
-        return 1;
+        exit_code = 1;
+        break;
       }
     } else if (!eval_string.empty()) {
       if (print_result) {
         v8::Local<v8::String> source = v8::String::NewFromUtf8(isolate, eval_string.c_str()).ToLocalChecked();
         v8::Local<v8::String> name = v8::String::NewFromUtf8(isolate, "[eval]").ToLocalChecked();
         if (env.ExecuteString(source, name, true).IsEmpty()) {
-          isolate->Dispose();
-          uv_loop_close(default_loop);
-          TearDownPlatform();
-          return 1;
+          exit_code = 1;
+          break;
         }
       } else {
         if (!ExecuteFileContent(env, eval_string, "[eval]")) {
-          isolate->Dispose();
-          uv_loop_close(default_loop);
-          TearDownPlatform();
-          return 1;
+          exit_code = 1;
+          break;
         }
       }
       
     } else if (!filename.empty()) {
       if (!std::filesystem::exists(filename)) {
         std::cerr << "elyxion: cannot open file '" << filename << "'" << std::endl;
-        isolate->Dispose();
-        uv_loop_close(default_loop);
-        TearDownPlatform();
-        return 1;
+        exit_code = 1;
+        break;
       }
       v8::Local<v8::Value> script_result;
       if (!env.LoadJSFile(std::filesystem::absolute(filename).string()).ToLocal(&script_result)) {
-        isolate->Dispose();
-        uv_loop_close(default_loop);
-        TearDownPlatform();
-        return 1;
+        exit_code = 1;
+        break;
       }
       
     } else if (run_interactive) {
@@ -261,16 +250,16 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
     
     // Run the event loop
     env.Run();
-  }
+  } while (false);
   
-  // Cleanup
+  // Cleanup after the Isolate::Scope has exited.
   isolate->Dispose();
   uv_loop_close(default_loop);
   TearDownPlatform();
   
   params->array_buffer_allocator = nullptr;
   
-  return 0;
+  return exit_code;
 }
 
 v8::MaybeLocal<v8::Promise> PromiseResolve(v8::Local<v8::Context> context,

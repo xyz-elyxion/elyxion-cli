@@ -87,6 +87,16 @@ The runtime includes JavaScript implementations for `events`, `stream`, `buffer`
 
 `package.json` is a user-project format created by `elyx init`; it is not a dependency of the Elyxion source tree and is not used to build or run Elyxion.
 
+## GitHub Actions
+
+The repository uses three Actions workflows:
+
+- `V8 SDK Release` clones `https://chromium.googlesource.com/v8/v8` on Linux, macOS, and Windows, builds the monolithic SDK, removes source-only content by packaging only `include/` and the library, and publishes the three SDK archives to the `v8-sdk-12.2.281.28` release.
+- `Build` downloads those SDK release assets and uploads native Linux, macOS, and Windows build artifacts.
+- `Release` downloads those same SDK assets when a `v*` tag is pushed, then publishes executable archives.
+
+Run `V8 SDK Release` manually once before running `Build` or pushing an application release. It requires no SDK URL environment variables. Its optional inputs are the V8 version and SDK release tag. The V8 checkout stays on the runner; `.git`, source files, and build objects are not included in the SDK archives.
+
 ## Development
 
 ```bash
