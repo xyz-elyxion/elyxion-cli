@@ -20,9 +20,11 @@
 # Notes:
 # - The version must be a real V8 release tag (e.g. 12.2.281.28). The repo's
 #   old build-v8.ps1 default "12.2.282" does not exist as a tag.
-# - Linux builds with use_custom_libcxx=false so the SDK links against the
-#   same libstdc++ that g++ uses to build elyxion. macOS keeps the libc++
-#   default, which is what clang uses there anyway.
+# - Both Linux and macOS build with use_custom_libcxx=false so the SDK links
+#   against the system standard library. On Linux that's libstdc++ (matching
+#   g++); on macOS it's system libc++ (matching clang). This avoids V8 12.2's
+#   bundled libc++ headers, which reference ::max_align_t in a way that breaks
+#   on macOS SDKs shipped with Xcode 16+.
 # - v8_use_external_startup_data=false embeds the snapshot in the binary, so
 #   no snapshot_blob.bin is needed at runtime.
 # - v8_enable_sandbox=false is required for this V8 12.2 embedder, which has no
@@ -157,11 +159,12 @@ GN_ARGS=(
   'treat_warnings_as_errors = false'
   'symbol_level = 0'
 )
-# Linux: elyxion links with g++/libstdc++, so build V8 with the same stdlib.
-# macOS: keep the libc++ default (clang uses libc++ there anyway).
-if [[ "$OS" == "Linux" ]]; then
-  GN_ARGS+=('use_custom_libcxx = false')
-fi
+# Use system standard library on all platforms:
+# - Linux: elyxion links with g++/libstdc++, so build V8 with the same stdlib.
+# - macOS: V8 12.2's bundled libc++ references ::max_align_t which may not be
+#   in the global namespace on newer macOS SDKs (Xcode 16+/macOS 15+). Using
+#   the system libc++ avoids the issue since macOS ships with libc++.
+GN_ARGS+=('use_custom_libcxx = false')
 
 BUILD_DIR="out/${ARCH}.release"
 echo "Generating build files..."
