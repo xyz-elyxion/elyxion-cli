@@ -78,6 +78,7 @@ add_executable(elyxion ${ELYXION_SOURCES})
 target_compile_definitions(elyxion PRIVATE
     ELYXION_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     ELYXION_BUILD_RESOURCE_DIR="${CMAKE_BINARY_DIR}/runtime/lib"
+    NOMINMAX
 )
 
 target_include_directories(elyxion PRIVATE
@@ -98,6 +99,11 @@ endif()
 # ---- Platform-Specific Configuration ----
 
 if(WIN32)
+    # The distributed V8 Windows SDK is built with /MT. Match that runtime
+    # choice to avoid mixing the static and dynamic MSVC CRTs at link time.
+    set_property(TARGET elyxion PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
     # MSVC resolves these Windows SDK import libraries by name through the
     # developer command prompt configured by the Visual Studio generator.
     # Using names directly avoids CMake's fragile find_library search here.
