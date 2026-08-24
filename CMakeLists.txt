@@ -65,6 +65,10 @@ elseif(ELYXION_AUTO_DOWNLOAD_LIBUV)
         URL "https://dist.libuv.org/dist/v1.48.0/libuv-v1.48.0.tar.gz"
     )
     FetchContent_MakeAvailable(libuv)
+    if(WIN32 AND MSVC AND TARGET uv_a)
+        set_property(TARGET uv_a PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
     add_library(elyxion_libuv ALIAS uv_a)
     set(LIBUV_INCLUDE_DIR "${libuv_SOURCE_DIR}/include")
 else()
