@@ -26,6 +26,12 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(V8 REQUIRED)
 
 # ---- Find or build libuv ----
+# The distributed Windows V8 SDK is built with /MT. Set the default before
+# FetchContent creates libuv targets so its static library uses the same CRT.
+if(WIN32 AND MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 include(FetchContent)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(LIBUV_BUILD_TESTS OFF CACHE BOOL "" FORCE)
