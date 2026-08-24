@@ -99,6 +99,39 @@ Write-Host "Syncing dependencies..."
 gclient sync -D 2>&1 | Select-Object -Last 5
 Pop-Location
 
+# ---- Patch VS/SDK detection for Visual Studio 2026 ----
+# The windows-2025-vs2026 runner ships Visual Studio 2026 (version 18.x)
+# installed under "...\Visual Studio\18\Enterprise". V8 12.2's vs_toolchain.py
+# only knows VS 2017/2019/2022 and locates the install via the vs2022_install
+# environment variable, so point that at the VS 2026 install. The Windows SDK
+# version pinned by V8 12.2 (10.0.22621.0) may not be installed on the runner,
+# so switch to the newest SDK actually present.
+$vsInstall = "C:\Program Files\Microsoft Visual Studio\18\Enterprise"
+if (Test-Path $vsInstall) {
+    $env:vs2022_install = $vsInstall
+    Write-Host "Using Visual Studio 2026 at $vsInstall"
+} else {
+    Write-Host "WARNING: Visual Studio 2026 not found at $vsInstall; VS detection unchanged"
+}
+
+$sdkIncludeRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Include"
+$newestSdk = Get-ChildItem $sdkIncludeRoot -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^10\.0\.\d+\.\d+$' } |
+    Sort-Object Name -Descending | Select-Object -First 1
+if ($newestSdk -and $newestSdk.Name -ne '10.0.22621.0') {
+    foreach ($file in @(
+            (Join-Path $v8Root "build\vs_toolchain.py"),
+            (Join-Path $v8Root "build\toolchain\win\setup_toolchain.py")
+        )) {
+        $content = Get-Content $file -Raw
+        if ($content -match "SDK_VERSION = '10\.0\.22621\.0'") {
+            $content = $content -replace "SDK_VERSION = '10\.0\.22621\.0'", "SDK_VERSION = '$($newestSdk.Name)'"
+            Set-Content -Path $file -Value $content -Encoding utf8
+            Write-Host "Patched $file to use Windows SDK $($newestSdk.Name)"
+        }
+    }
+}
+
 Push-Location $v8Root
 
 # ---- Generate build ----
