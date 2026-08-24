@@ -115,14 +115,19 @@ $gnArgs = @(
     'treat_warnings_as_errors = false',
     'symbol_level = 0',
     'use_lld = false'
-) -join " "
+)
 
 $buildDir = "out\x64.release"
 
 Write-Host "Generating build files..."
 # GN argument changes are ABI-sensitive; do not mix objects from profiles.
+# Write the args to args.gn instead of passing --args on the command line:
+# Windows argv parsing strips the quotes around string values like "x64",
+# which makes `gn gen` fail with "Undefined identifier".
 Remove-Item -Recurse -Force $buildDir -ErrorAction SilentlyContinue
-& gn gen $buildDir --args="$gnArgs"
+New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+$gnArgs | Set-Content -Path (Join-Path $buildDir "args.gn") -Encoding utf8
+& gn gen $buildDir
 
 # ---- Build ----
 Write-Host "Building V8 (this takes 30-90 minutes)..."

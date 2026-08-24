@@ -167,8 +167,12 @@ BUILD_DIR="out/${ARCH}.release"
 echo "Generating build files..."
 # GN argument changes are ABI-sensitive. Remove the previous output directory
 # so Ninja cannot combine objects from different V8 feature profiles.
+# Write the args to args.gn (one per line) instead of passing --args on the
+# command line; Windows argv parsing strips quotes from string values.
 rm -rf "${V8_SRC}/v8/${BUILD_DIR}"
-(cd "${V8_SRC}/v8" && gn gen "$BUILD_DIR" --args="${GN_ARGS[*]}")
+mkdir -p "${V8_SRC}/v8/${BUILD_DIR}"
+printf '%s\n' "${GN_ARGS[@]}" > "${V8_SRC}/v8/${BUILD_DIR}/args.gn"
+(cd "${V8_SRC}/v8" && gn gen "$BUILD_DIR")
 
 # ---- Build ----
 # Parallelism: default to core count, override with JOBS env var

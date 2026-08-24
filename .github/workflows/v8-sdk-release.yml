@@ -29,7 +29,11 @@ jobs:
           - os: ubuntu-latest
             platform: linux-x64
             archive: v8-sdk-linux-x64.tar.xz
-          - os: macos-latest
+          # V8 12.2's bundled libc++ requires max_align_t from the macOS SDK.
+          # Apple removed it from the macOS 26 SDK (Xcode 26), which breaks the
+          # build, so build the macOS SDK on the macOS 15 runner (Xcode 16.4 /
+          # macOS 15.5 SDK) instead of macos-latest (which is macOS 26).
+          - os: macos-15
             platform: macos
             archive: v8-sdk-macos.tar.xz
           - os: windows-latest
@@ -50,11 +54,15 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake xz || true
 
+      # Pin Xcode 16.4 so GN picks the macOS 15.5 SDK. The macos-15 image also
+      # ships Xcode 26.x; if its default Xcode ever flips to 26, the SDK build
+      # would hit the max_align_t removal again.
       - name: Build V8 SDK on Unix
         if: runner.os != 'Windows'
         shell: bash
         env:
           JOBS: 2
+          DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
         run: |
           set -euo pipefail
           chmod +x scripts/build-v8.sh
