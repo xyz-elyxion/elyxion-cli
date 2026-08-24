@@ -30,7 +30,6 @@ Or:
 ```bash
 V8_DIR=/path/to/standalone-v8-sdk make build
 ```
-
 The executable is written to `build/elyxion`. CMake copies the JavaScript runtime to `build/runtime/lib`.
 
 To install the runtime and commands:
