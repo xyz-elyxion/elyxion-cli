@@ -110,6 +110,37 @@ else
   (cd "${V8_SRC}/v8" && git checkout "branch-heads/${VERSION%.*}" -B "elyxion-${VERSION}")
 fi
 
+# ---- Patch vpython spec (Apple Silicon workaround) ----
+# V8's .vpython3 pins numpy (resolves to 1.21.1+supported.1), which has no
+# cp38 macOS arm64 wheel in the Chrome artifact registry, so the
+# `vpython3 -vpython-tool install` sync hook fails on Apple Silicon runners.
+# The vpython venv is only used by V8's test tooling - the SDK build does not
+# need it - so drop the numpy wheel from the spec before syncing.
+python3 - "${V8_SRC}/v8/.vpython3" <<'PYEOF'
+import sys
+
+path = sys.argv[1]
+with open(path) as f:
+    lines = f.readlines()
+
+out = []
+i = 0
+while i < len(lines):
+    if lines[i].strip() == 'wheel: <':
+        j = i + 1
+        while j < len(lines) and lines[j].strip() != '>':
+            j += 1
+        j += 1  # include the closing '>' line
+        if any('numpy' in line for line in lines[i:j]):
+            i = j
+            continue
+    out.append(lines[i])
+    i += 1
+
+with open(path, 'w') as f:
+    f.writelines(out)
+PYEOF
+
 # ---- Sync dependencies ----
 echo "Syncing dependencies..."
 (cd "$V8_SRC" && gclient sync -D --with_branch_heads)

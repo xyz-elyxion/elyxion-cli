@@ -68,6 +68,31 @@ if ($LASTEXITCODE -ne 0) {
 }
 Pop-Location
 
+# ---- Patch vpython spec (Apple Silicon workaround) ----
+# V8's .vpython3 pins numpy (resolves to 1.21.1+supported.1), which has no
+# cp38 macOS arm64 wheel in the Chrome artifact registry, so the vpython3
+# install hook fails on Apple Silicon runners. The vpython venv is only used
+# by V8's test tooling - the SDK build does not need it - so drop the numpy
+# wheel from the spec before syncing.
+$vpythonSpec = Join-Path $v8Root ".vpython3"
+$lines = Get-Content $vpythonSpec
+$out = New-Object System.Collections.Generic.List[string]
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].Trim() -eq 'wheel: <') {
+        $j = $i + 1
+        while ($j -lt $lines.Count -and $lines[$j].Trim() -ne '>') { $j++ }
+        $j++ # include the closing '>' line
+        $last = [Math]::Min($j - 1, $lines.Count - 1)
+        $block = $lines[$i..$last]
+        if (($block -join "`n") -match 'numpy') {
+            $i = $j - 1
+            continue
+        }
+    }
+    $out.Add($lines[$i])
+}
+Set-Content -Path $vpythonSpec -Value $out
+
 # ---- Sync dependencies for the selected revision ----
 Push-Location $v8Src
 Write-Host "Syncing dependencies..."
