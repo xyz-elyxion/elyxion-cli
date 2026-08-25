@@ -19,7 +19,7 @@
 set -euo pipefail
 
 # ---- Configuration ------------------------------------------------
-ELYXION_REPO="${ELYXION_REPO:-elyxion-js/elyxion}"
+ELYXION_REPO="${ELYXION_REPO:-xyz-elyxion/elyxion-cli}"
 ELYXION_VERSION="${ELYXION_VERSION:-latest}"
 ELYXION_INSTALL_DIR="${ELYXION_INSTALL_DIR:-$HOME/.elyxion}"
 ELYXION_BIN_DIR="${ELYXION_BIN_DIR:-}"

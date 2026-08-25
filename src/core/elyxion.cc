@@ -4,6 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cstdlib>
 #include <filesystem>
 #include <libplatform/libplatform.h>
 #include <uv.h>
@@ -102,6 +103,19 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       run_interactive = true;
     } else if (arg == "--repl") {
       run_interactive = true;
+    } else if (arg == "--upgrade" || arg == "--update") {
+      std::cout << "elyxion: checking for updates..." << std::endl;
+      int ret = 0;
+#ifdef _WIN32
+      ret = std::system("powershell -NoProfile -Command \"iwr -useb https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.ps1 | iex\"");
+#else
+      ret = std::system("curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash");
+#endif
+      if (ret != 0) {
+        std::cerr << "elyxion: upgrade failed. You can manually reinstall:" << std::endl;
+        std::cerr << "  curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash" << std::endl;
+      }
+      return ret;
     } else if ((arg == "-v" || arg == "--version") && !package_manager) {
       std::cout << "elyxion v" << ELYXION_VERSION_STRING << std::endl;
       TearDownPlatform();
@@ -116,6 +130,8 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
       std::cout << "  -i, --interactive     Start REPL" << std::endl;
       std::cout << "  -v, --version         Print version" << std::endl;
       std::cout << "  -h, --help            Print help" << std::endl;
+      std::cout << "  --upgrade, --update   Upgrade to the latest version" << std::endl;
+      std::cout << "  --check-updates       Check for newer versions" << std::endl;
       std::cout << std::endl;
       std::cout << "Examples:" << std::endl;
       std::cout << "  elyxion script.js     Run a script" << std::endl;

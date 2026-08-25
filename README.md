@@ -7,12 +7,12 @@ The distributed commands are native executables or native-executable launchers. 
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/elyxion-js/elyxion/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash
 ```
 
 ```powershell
 # Windows (PowerShell)
-iwr -useb https://raw.githubusercontent.com/elyxion-js/elyxion/main/scripts/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.ps1 | iex
 ```
 
 After installing, restart your terminal — then `elyxion` and `elyx` are available globally:
@@ -27,12 +27,12 @@ elyx install <package>
 To pin a specific version:
 
 ```bash
-ELYXION_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/elyxion-js/elyxion/main/scripts/install.sh | bash
+ELYXION_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash
 ```
 
 ## Manual Download
 
-Download the latest archive from [GitHub Releases](https://github.com/elyxion-js/elyxion/releases), extract it, and add the `bin/` directory to your PATH.
+Download the latest archive from [GitHub Releases](https://github.com/xyz-elyxion/elyxion-cli/releases), extract it, and add the `bin/` directory to your PATH.
 
 ## Requirements
 
@@ -101,6 +101,7 @@ elyx publish --dry-run
 | `-v`, `--version` | Print the runtime version |
 | `-h`, `--help` | Print help |
 | `-r`, `--require <module>` | Load a module before the script |
+| `--upgrade`, `--update` | Check for updates and install the latest version |
 
 ## Built-in Modules
 

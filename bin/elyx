@@ -62,5 +62,5 @@ fi
 
 echo "elyx: standalone binary not found" >&2
 echo "  Build from source: cmake -B build && cmake --build build" >&2
-echo "  Or install: curl -fsSL https://raw.githubusercontent.com/elyxion-js/elyxion/main/scripts/install.sh | bash" >&2
+echo "  Or install: curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash" >&2
 exit 1

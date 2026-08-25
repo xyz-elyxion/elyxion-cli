@@ -20,7 +20,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 # ---- Configuration ------------------------------------------------
-$Repo = if ($env:ELYXION_REPO) { $env:ELYXION_REPO } else { "elyxion-js/elyxion" }
+$Repo = if ($env:ELYXION_REPO) { $env:ELYXION_REPO } else { "xyz-elyxion/elyxion-cli" }
 $Version = if ($env:ELYXION_VERSION) { $env:ELYXION_VERSION } else { "latest" }
 $InstallDir = if ($env:ELYXION_INSTALL_DIR) { $env:ELYXION_INSTALL_DIR } else { "$env:LOCALAPPDATA\Elyxion" }
 
