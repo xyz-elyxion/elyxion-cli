@@ -139,12 +139,13 @@ fi
 
 # ---- Setup PATH ----------------------------------------------------
 setup_path() {
-  local bindir="$1"
+  local bindir="${1:-}"
 
   # If user specified a bin dir, use it
   if [ -n "$ELYXION_BIN_DIR" ]; then
     mkdir -p "$ELYXION_BIN_DIR"
     create_wrappers "$ELYXION_BIN_DIR"
+    ELYXION_BIN_USED="$ELYXION_BIN_DIR"
     return
   fi
 
@@ -163,6 +164,7 @@ setup_path() {
     if mkdir -p "$cand" 2>/dev/null && [ -w "$cand" ]; then
       create_wrappers "$cand"
       ok "Commands installed to ${cand}/"
+      ELYXION_BIN_USED="$cand"
       return
     fi
   done
@@ -171,6 +173,7 @@ setup_path() {
   mkdir -p "$HOME/.local/bin"
   create_wrappers "$HOME/.local/bin"
   ok "Commands installed to ${HOME}/.local/bin/"
+  ELYXION_BIN_USED="$HOME/.local/bin"
 }
 
 create_wrappers() {
@@ -218,10 +221,7 @@ if ! "$ELYXION_INSTALL_DIR/elyxion" --version >/dev/null 2>&1; then
 fi
 
 # ---- PATH guidance -------------------------------------------------
-BIN_DIR_USED="$HOME/.local/bin"
-if [ -n "$ELYXION_BIN_DIR" ]; then
-  BIN_DIR_USED="$ELYXION_BIN_DIR"
-fi
+BIN_DIR_USED="${ELYXION_BIN_USED:-$HOME/.local/bin}"
 
 # Check if the bin dir is on PATH
 case ":$PATH:" in
