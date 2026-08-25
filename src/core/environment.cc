@@ -10,9 +10,13 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <cstdio>
 #else
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <poll.h>
+#include <sys/wait.h>
+#include <unistd.h>
 extern char** environ;
 #endif
 
@@ -396,6 +400,101 @@ void Environment::SetupNativeFunctions() {
         if (info.Length() < 1) return;
         v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
         std::filesystem::remove_all(*path_str);
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // ---- Native process execution -------------------------------
+  // __elyxion_exec(command) -> { status, stdout, stderr } | undefined
+  // Synchronously runs a shell command and captures its output.
+  // Used by child_process.execSync so the CLI can shell out to curl.
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_exec").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        if (info.Length() < 1 || !info[0]->IsString()) return;
+        v8::String::Utf8Value cmd(isolate, info[0]);
+        std::string command(*cmd);
+        if (command.empty()) return;
+
+        std::string out_data;
+        std::string err_data;
+        int exit_status = -1;
+
+#ifdef _WIN32
+        // Windows: _popen with stderr merged into stdout (2>&1)
+        FILE* p = _popen((command + " 2>&1").c_str(), "r");
+        if (p) {
+          char buf[4096];
+          size_t n;
+          while ((n = fread(buf, 1, sizeof(buf), p)) > 0) out_data.append(buf, n);
+          exit_status = _pclose(p);
+        }
+#else
+        int out_pipe[2];
+        int err_pipe[2];
+        if (pipe(out_pipe) != 0 || pipe(err_pipe) != 0) return;
+
+        pid_t pid = fork();
+        if (pid < 0) {
+          close(out_pipe[0]); close(out_pipe[1]);
+          close(err_pipe[0]); close(err_pipe[1]);
+          return;
+        }
+
+        if (pid == 0) {
+          // Child: wire stdout/stderr to the pipes and exec the shell
+          dup2(out_pipe[1], STDOUT_FILENO);
+          dup2(err_pipe[1], STDERR_FILENO);
+          close(out_pipe[0]); close(out_pipe[1]);
+          close(err_pipe[0]); close(err_pipe[1]);
+          execl("/bin/sh", "sh", "-c", command.c_str(), (char*)nullptr);
+          _exit(127);
+        }
+
+        // Parent: read both pipes until EOF, then reap the child
+        close(out_pipe[1]);
+        close(err_pipe[1]);
+        bool out_open = true, err_open = true;
+        while (out_open || err_open) {
+          struct pollfd fds[2];
+          int nfds = 0;
+          if (out_open) { fds[nfds].fd = out_pipe[0]; fds[nfds].events = POLLIN; fds[nfds].revents = 0; nfds++; }
+          if (err_open) { fds[nfds].fd = err_pipe[0]; fds[nfds].events = POLLIN; fds[nfds].revents = 0; nfds++; }
+          int pr = poll(fds, nfds, -1);
+          if (pr < 0) break;
+          for (int i = 0; i < nfds; i++) {
+            int fd = fds[i].fd;
+            char buf[4096];
+            ssize_t n = read(fd, buf, sizeof(buf));
+            if (n > 0) {
+              if (fd == out_pipe[0]) out_data.append(buf, n);
+              else err_data.append(buf, n);
+            } else if (n == 0) {
+              close(fd);
+              if (fd == out_pipe[0]) out_open = false;
+              else err_open = false;
+            }
+          }
+        }
+
+        int raw_status = 0;
+        waitpid(pid, &raw_status, 0);
+        if (WIFEXITED(raw_status)) exit_status = WEXITSTATUS(raw_status);
+        else if (WIFSIGNALED(raw_status)) exit_status = 128 + WTERMSIG(raw_status);
+        else exit_status = -1;
+#endif
+
+        auto ctx = isolate->GetCurrentContext();
+        auto result = v8::Object::New(isolate);
+        result->Set(ctx,
+            v8::String::NewFromUtf8(isolate, "status").ToLocalChecked(),
+            v8::Integer::New(isolate, exit_status)).Check();
+        result->Set(ctx,
+            v8::String::NewFromUtf8(isolate, "stdout").ToLocalChecked(),
+            v8::String::NewFromUtf8(isolate, out_data.c_str()).ToLocalChecked()).Check();
+        result->Set(ctx,
+            v8::String::NewFromUtf8(isolate, "stderr").ToLocalChecked(),
+            v8::String::NewFromUtf8(isolate, err_data.c_str()).ToLocalChecked()).Check();
+        info.GetReturnValue().Set(result);
       })->GetFunction(context()).ToLocalChecked()).Check();
 
   // ---- Native TCP networking ---------------------------------

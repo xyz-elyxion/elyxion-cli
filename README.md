@@ -91,6 +91,73 @@ elyx login
 elyx publish --dry-run
 ```
 
+## Package Registry
+
+The Elyxion registry is hosted at **https://xyz-elyxion.onrender.com** — the `site/` folder in this repo is the server. It serves the marketing site *and* the registry API: accounts, tokens, package metadata, and search all live there. It runs on the Elyxion runtime itself (native TCP + fs — no Node.js, no Python).
+
+Create an account (or log in):
+
+```bash
+elyx login
+```
+
+Publish a package from a folder with a `package.json`:
+
+```bash
+elyx init        # or write package.json yourself
+elyx publish
+```
+
+Search and install:
+
+```bash
+elyx search http
+elyx install <package>
+elyx logout
+```
+
+### Registry API
+
+| Method | Route | Description |
+| --- | --- | --- |
+| `POST` | `/api/auth/register` | Create an account `{ username, password }` → token |
+| `POST` | `/api/auth/login` | Log in `{ username, password }` → token |
+| `POST` | `/api/auth/logout` | Invalidate the token |
+| `GET` | `/api/auth/me` | Current user info (Bearer token) |
+| `GET` | `/api/packages` | List all packages |
+| `GET` | `/api/packages/:name` | Package metadata (all versions) |
+| `GET` | `/api/packages/:name/:version` | Single version metadata |
+| `POST` | `/api/packages` | Publish `{ package, readme? }` (Bearer token) |
+| `DELETE` | `/api/packages/:name/:version` | Unpublish a version (owner only) |
+| `GET` | `/api/search?q=` | Search packages |
+| `GET` | `/api/stats` | Package/user counts |
+| `GET` | `/health` | Health check (used by Render) |
+
+Use a different registry:
+
+```bash
+elyx config set registry https://your-registry.example.com
+```
+
+### Running the registry server
+
+```bash
+elyxion site/build.js         # build the static site into dist/
+elyxion site/server.js        # serve site + registry API on :3000
+```
+
+`DATA_DIR` (default `site/data/`) holds `users.json`, `tokens.json`, and `packages.json`. Set `PUBLIC_URL` to the public base URL used in package metadata.
+
+### Deploying to Render
+
+The repo ships a [Render blueprint](render.yaml) and [Dockerfile](site/Dockerfile). The container downloads the latest Elyxion Linux release, builds the site if needed, and runs `site/server.js`:
+
+1. Push to GitHub.
+2. In Render: **New → Blueprint** → pick `xyz-elyxion/elyxion-cli`.
+3. The service deploys at `https://xyz-elyxion.onrender.com` with `/health` as the health check.
+
+> Persistent storage: the free tier uses an ephemeral filesystem, so accounts/packages reset on redeploy. Uncomment the `disk` block in `render.yaml` (paid plan) to mount `/data` permanently.
+
 ## CLI Options
 
 | Option | Description |
