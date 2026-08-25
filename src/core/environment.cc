@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
+#include <filesystem>
 
 #ifndef _WIN32
 extern char** environ;
@@ -273,10 +274,130 @@ void Environment::SetupCallbacks() {
   // Note: SetPromiseHookCallback may not be available in all V8 versions
 }
 
+void Environment::SetupNativeFunctions() {
+  v8::Context::Scope context_scope(context());
+
+  // __elyxion_fs_writeFileSync(path, data)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_fs_writeFileSync").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 2) return;
+        v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
+        v8::String::Utf8Value data_str(info.GetIsolate(), info[1]);
+        std::ofstream out(*path_str, std::ios::binary);
+        if (out.is_open()) {
+          out.write(*data_str, data_str.length());
+          out.close();
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_fs_readFileSync(path) -> string | undefined
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_fs_readFileSync").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 1) return;
+        v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
+        std::ifstream in(*path_str, std::ios::binary);
+        if (in.is_open()) {
+          std::stringstream buf;
+          buf << in.rdbuf();
+          info.GetReturnValue().Set(
+              v8::String::NewFromUtf8(info.GetIsolate(), buf.str().c_str()).ToLocalChecked());
+        } else {
+          info.GetReturnValue().Set(v8::Undefined(info.GetIsolate()));
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_fs_mkdir(path)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_fs_mkdir").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 1) return;
+        v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
+        std::filesystem::create_directories(*path_str);
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_fs_exists(path) -> bool
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_fs_exists").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 1) return;
+        v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
+        info.GetReturnValue().Set(v8::Boolean::New(info.GetIsolate(),
+            std::filesystem::exists(*path_str)));
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_fs_readdir(path) -> array of filenames
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_fs_readdir").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 1) return;
+        v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
+        v8::Local<v8::Array> result = v8::Array::New(info.GetIsolate());
+        try {
+          uint32_t idx = 0;
+          for (const auto& entry : std::filesystem::directory_iterator(*path_str)) {
+            result->Set(info.GetIsolate()->GetCurrentContext(), idx++,
+                v8::String::NewFromUtf8(info.GetIsolate(),
+                    entry.path().filename().string().c_str()).ToLocalChecked()).Check();
+          }
+        } catch (...) {}
+        info.GetReturnValue().Set(result);
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_fs_stat(path) -> { size, isDir, isFile, mtimeMs } | undefined
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_fs_stat").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 1) return;
+        v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
+        try {
+          auto s = std::filesystem::status(*path_str);
+          if (!std::filesystem::exists(s)) {
+            info.GetReturnValue().Set(v8::Undefined(info.GetIsolate()));
+            return;
+          }
+          v8::Local<v8::Object> obj = v8::Object::New(info.GetIsolate());
+          auto ctx = info.GetIsolate()->GetCurrentContext();
+          obj->Set(ctx, v8::String::NewFromUtf8(info.GetIsolate(), "isDir").ToLocalChecked(),
+              v8::Boolean::New(info.GetIsolate(), std::filesystem::is_directory(s))).Check();
+          obj->Set(ctx, v8::String::NewFromUtf8(info.GetIsolate(), "isFile").ToLocalChecked(),
+              v8::Boolean::New(info.GetIsolate(), std::filesystem::is_regular_file(s))).Check();
+          if (std::filesystem::is_regular_file(s)) {
+            obj->Set(ctx, v8::String::NewFromUtf8(info.GetIsolate(), "size").ToLocalChecked(),
+                v8::Number::New(info.GetIsolate(),
+                    static_cast<double>(std::filesystem::file_size(*path_str)))).Check();
+          }
+          info.GetReturnValue().Set(obj);
+        } catch (...) {
+          info.GetReturnValue().Set(v8::Undefined(info.GetIsolate()));
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_fs_unlink(path)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_fs_unlink").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 1) return;
+        v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
+        std::filesystem::remove(*path_str);
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_fs_rmdir(path)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_fs_rmdir").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        if (info.Length() < 1) return;
+        v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
+        std::filesystem::remove_all(*path_str);
+      })->GetFunction(context()).ToLocalChecked()).Check();
+}
+
 bool Environment::Bootstrap() {
   v8::Context::Scope context_scope(context());
   
   SetupCallbacks();
+  SetupNativeFunctions();
   
   return true;
 }

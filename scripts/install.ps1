@@ -83,30 +83,14 @@ Remove-Item -Recurse -Force $TempDir
 $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 $BinDir = "$InstallDir\bin"
 
-# Create bin directory and wrapper scripts if needed
+# Create bin directory if it doesn't exist yet
 if (-not (Test-Path $BinDir)) {
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 }
 
-# Create elyxion.cmd wrapper
-@"
-@echo off
-setlocal
-set "ELYXION_HOME=%ELYXION_HOME%"
-if "%ELYXION_HOME%"=="" set "ELYXION_HOME=$InstallDir"
-"%ELYXION_HOME%\elyxion.exe" %*
-exit /b %ERRORLEVEL%
-"@ | Out-File -FilePath "$BinDir\elyxion.cmd" -Encoding ASCII
-
-# Create elyx.cmd wrapper
-@"
-@echo off
-setlocal
-set "ELYXION_HOME=%ELYXION_HOME%"
-if "%ELYXION_HOME%"=="" set "ELYXION_HOME=$InstallDir"
-"%ELYXION_HOME%\elyxion.exe" --package-manager %*
-exit /b %ERRORLEVEL%
-"@ | Out-File -FilePath "$BinDir\elyx.cmd" -Encoding ASCII
+# Don't overwrite the archive's own .cmd launchers — they already point
+# at the exe in the same bin/ directory and don't need fixing.
+# The release archive ships bin/elyxion.cmd and bin/elyx.cmd.
 
 # Add to PATH if not already present
 if ($UserPath -notlike "*$BinDir*") {
@@ -124,7 +108,11 @@ if ($UserPath -notlike "*$BinDir*") {
 }
 
 # ---- Verify installation -------------------------------------------
-$ElyxionExe = "$InstallDir\elyxion.exe"
+$ElyxionExe = "$InstallDir\bin\elyxion.exe"
+if (-not (Test-Path $ElyxionExe)) {
+    # Also try flat layout (older releases)
+    $ElyxionExe = "$InstallDir\elyxion.exe"
+}
 if (Test-Path $ElyxionExe) {
     $ElyxionVersion = & $ElyxionExe --version 2>&1
     Write-Host ""
