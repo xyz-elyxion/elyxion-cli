@@ -166,6 +166,25 @@ mkdir -p "$ELYXION_INSTALL_DIR"
 info "Extracting to ${ELYXION_INSTALL_DIR}..."
 tar -xzf "$TMPDIR/elyxion.tar.gz" -C "$ELYXION_INSTALL_DIR" --strip-components=0
 
+# ---- Flatten nested archive layout ----------------------------------
+# GitHub's "latest/download" may wrap the archive in a single folder.
+# If the extracted top-level is one directory with no files, shift up.
+FLAT_ITEMS="$(ls -A "$ELYXION_INSTALL_DIR" 2>/dev/null || true)"
+FLAT_DIRS="$(ls -d "$ELYXION_INSTALL_DIR"/*/ 2>/dev/null || true)"
+FLAT_FILES="$(find "$ELYXION_INSTALL_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l)"
+FLAT_DIR_COUNT="$(echo "$FLAT_DIRS" | wc -l)"
+if [ "$FLAT_DIR_COUNT" -eq 1 ] && [ "$FLAT_FILES" -eq 0 ]; then
+  NESTED_DIR="$(echo "$FLAT_DIRS" | tr -d ' ')"
+  info "Archive is nested under $(basename "$NESTED_DIR") — flattening..."
+  FLAT_TEMP="${ELYXION_INSTALL_DIR}._flat"
+  mv "$NESTED_DIR" "$FLAT_TEMP"
+  rm -rf "${ELYXION_INSTALL_DIR:?}"/*
+  mv "$FLAT_TEMP"/* "$ELYXION_INSTALL_DIR/" 2>/dev/null || true
+  mv "$FLAT_TEMP"/.* "$ELYXION_INSTALL_DIR/" 2>/dev/null || true
+  rmdir "$FLAT_TEMP" 2>/dev/null || true
+  info "Flattened."
+fi
+
 # Rename elyxion.bin → elyxion (the actual binary)
 if [ -f "$ELYXION_INSTALL_DIR/elyxion.bin" ]; then
   mv "$ELYXION_INSTALL_DIR/elyxion.bin" "$ELYXION_INSTALL_DIR/elyxion"

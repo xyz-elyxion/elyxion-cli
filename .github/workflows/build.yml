@@ -117,7 +117,11 @@ jobs:
           Copy-Item bin\elyx.cmd, bin\elyxion.cmd "$dist\bin\"
           Copy-Item scripts\install.sh, scripts\install.ps1 "$dist\"
           Copy-Item README.md, LICENSE "$dist\"
-          Compress-Archive -Path $dist -DestinationPath "elyxion-${{ matrix.os }}.zip"
+          # Compress the contents, not the folder itself, so the
+          # archive is flat (bin/ + lib/ at the root, not nested).
+          Push-Location $dist
+          Compress-Archive -Path * -DestinationPath "..\elyxion-${{ matrix.os }}.zip"
+          Pop-Location
 
       - name: Upload native artifact
         uses: actions/upload-artifact@v4

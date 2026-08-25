@@ -119,7 +119,11 @@ jobs:
           Copy-Item bin\elyx.cmd, bin\elyxion.cmd "$dist\bin\"
           Copy-Item scripts\install.sh, scripts\install.ps1 "$dist\"
           Copy-Item README.md, LICENSE "$dist\"
-          Compress-Archive -Path $dist -DestinationPath "${{ matrix.artifact }}.zip"
+          # Compress the contents, not the folder itself, so the
+          # archive is flat (bin/ + lib/ at the root, not nested).
+          Push-Location $dist
+          Compress-Archive -Path * -DestinationPath "..\${{ matrix.artifact }}.zip"
+          Pop-Location
 
       - name: Upload Unix archive
         if: runner.os != 'Windows'

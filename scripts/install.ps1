@@ -21,25 +21,23 @@ $Version = if ($env:ELYXION_VERSION) { $env:ELYXION_VERSION } else { "latest" }
 $InstallDir = if ($env:ELYXION_INSTALL_DIR) { $env:ELYXION_INSTALL_DIR } else { "$env:LOCALAPPDATA\Elyxion" }
 
 # ---- Logging -------------------------------------------------------
-$LogDir = $InstallDir
-try { New-Item -ItemType Directory -Force -Path $LogDir -ErrorAction Stop | Out-Null } catch {
-    $LogDir = "$env:TEMP"
-    New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-}
-$LogFile = Join-Path $LogDir "install.log"
+# Write logs to TEMP initially so they don't conflict with deleting
+# an old install dir (Start-Transcript locks its file).  At the end we
+# copy the final log into the install dir.
+$LogFile = Join-Path $env:TEMP "elyxion-install.log"
+$FinalLogFile = Join-Path $InstallDir "install.log"
 
 # All further output is shown in the console AND appended to the log
 function Log {
     $msg = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $($args -join ' ')"
     Write-Host $msg
-    # Also write to log file, stripping ANSI from the raw host stream
     try { Add-Content -Path $LogFile -Value $msg -Encoding UTF8 -ErrorAction SilentlyContinue } catch {}
 }
 
 # Try Start-Transcript too for completeness (captures raw PowerShell output)
 $usingTranscript = $false
 try {
-    $transcriptPath = Join-Path $LogDir "install-transcript.txt"
+    $transcriptPath = Join-Path $env:TEMP "elyxion-install-transcript.txt"
     Start-Transcript -Path $transcriptPath -Append -Force -ErrorAction Stop | Out-Null
     $usingTranscript = $true
 } catch {
@@ -144,6 +142,29 @@ try {
     Log "[elyxion] Log saved to: $LogFile"
     Read-Host "Press Enter to exit"
     exit 1
+}
+
+# ---- Flatten nested archive layout -------------------------------
+# GitHub's "latest/download" URL may wrap the archive in a folder.
+# If the top level of the install dir contains exactly one directory
+# and no files (common for nested zips), shift its contents up.
+try {
+    $topItems = Get-ChildItem $InstallDir
+    $topDirs  = @($topItems | Where-Object { $_.PSIsContainer })
+    $topFiles = @($topItems | Where-Object { -not $_.PSIsContainer })
+    if ($topDirs.Count -eq 1 -and $topFiles.Count -eq 0) {
+        $nested = $topDirs[0]
+        Log "[elyxion] Archive is nested under '$($nested.Name)' — flattening..."
+        $flatTemp = "$InstallDir._flat"
+        Remove-Item -Recurse -Force $flatTemp -ErrorAction SilentlyContinue
+        Move-Item $nested.FullName $flatTemp
+        Remove-Item -Recurse -Force "$InstallDir\*" -ErrorAction SilentlyContinue
+        Get-ChildItem $flatTemp | Move-Item -Destination $InstallDir -Force
+        Remove-Item $flatTemp -ErrorAction SilentlyContinue
+        Log "[elyxion] Flattened."
+    }
+} catch {
+    Log "[elyxion] Warning: could not flatten archive: $_"
 }
 
 # Clean up temp
@@ -255,13 +276,15 @@ if ($usingTranscript) {
     try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
 }
 
-# Also copy the log to the install dir for easy access
+# Copy the log and transcript into the install dir for easy access
 try {
-    if ($LogFile -ne (Join-Path $InstallDir "install.log")) {
-        Copy-Item $LogFile (Join-Path $InstallDir "install.log") -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $InstallDir -ErrorAction SilentlyContinue | Out-Null
+    Copy-Item $LogFile $FinalLogFile -Force -ErrorAction SilentlyContinue
+    if ($usingTranscript) {
+        Copy-Item $transcriptPath (Join-Path $InstallDir "install-transcript.txt") -Force -ErrorAction SilentlyContinue
     }
 } catch {}
 
 # Keep window open
 Write-Host ""
-Write-Host "Log saved to: $LogFile" -ForegroundColor Cyan
+Write-Host "Log saved to: $FinalLogFile" -ForegroundColor Cyan
