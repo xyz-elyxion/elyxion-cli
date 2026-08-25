@@ -8,8 +8,10 @@
 #
 # Set $env:ELYXION_VERSION to pin a specific release (e.g. v1.0.0).
 # Set $env:ELYXION_INSTALL_DIR to change the install directory.
+#
+# All output is saved to an install log. If something goes wrong, read:
+#   %LOCALAPPDATA%\Elyxion\install.log
 
-# Show errors and keep the window open if something fails
 $ErrorActionPreference = "Continue"
 $host.UI.RawUI.WindowTitle = "Elyxion Installer"
 
@@ -18,12 +20,53 @@ $Repo    = if ($env:ELYXION_REPO)    { $env:ELYXION_REPO }    else { "xyz-elyxio
 $Version = if ($env:ELYXION_VERSION) { $env:ELYXION_VERSION } else { "latest" }
 $InstallDir = if ($env:ELYXION_INSTALL_DIR) { $env:ELYXION_INSTALL_DIR } else { "$env:LOCALAPPDATA\Elyxion" }
 
+# ---- Logging -------------------------------------------------------
+$LogDir = $InstallDir
+try { New-Item -ItemType Directory -Force -Path $LogDir -ErrorAction Stop | Out-Null } catch {
+    $LogDir = "$env:TEMP"
+    New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+}
+$LogFile = Join-Path $LogDir "install.log"
+
+# All further output is shown in the console AND appended to the log
+function Log {
+    $msg = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $($args -join ' ')"
+    Write-Host $msg
+    # Also write to log file, stripping ANSI from the raw host stream
+    try { Add-Content -Path $LogFile -Value $msg -Encoding UTF8 -ErrorAction SilentlyContinue } catch {}
+}
+
+# Try Start-Transcript too for completeness (captures raw PowerShell output)
+$usingTranscript = $false
+try {
+    $transcriptPath = Join-Path $LogDir "install-transcript.txt"
+    Start-Transcript -Path $transcriptPath -Append -Force -ErrorAction Stop | Out-Null
+    $usingTranscript = $true
+} catch {
+    Log "[elyxion] Transcript not available — using manual logging only."
+}
+
+Log ""
+Log "=== Elyxion Installer Log ==="
+Log "Date:     $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Log "User:     $env:USERNAME"
+Log "OS:       $($env:OS)"
+Log "Arch:     $(if ([Environment]::Is64BitOperatingSystem) { 'x64' } else { 'ia32' })"
+Log "PS:       $($PSVersionTable.PSVersion)"
+Log "Repo:     $Repo"
+Log "Version:  $Version"
+Log "Install:  $InstallDir"
+Log "Log:      $LogFile"
+Log "PWD:      $(Get-Location)"
+Log "=============================="
+Log ""
+
 # ---- Platform detection --------------------------------------------
 $Arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "ia32" }
 $ArchiveName = "elyxion-windows-x64"
 
-Write-Host "[elyxion] Platform: windows/$Arch" -ForegroundColor Cyan
-Write-Host "[elyxion] Install directory: $InstallDir" -ForegroundColor Cyan
+Log "[elyxion] Platform: windows/$Arch"
+Log "[elyxion] Install directory: $InstallDir"
 
 # ---- Determine release URL -----------------------------------------
 $ReleaseUrl = "https://github.com/$Repo/releases"
@@ -33,60 +76,89 @@ if ($Version -eq "latest") {
     $DownloadUrl = "$ReleaseUrl/download/$Version/$ArchiveName.zip"
 }
 
+Log "[elyxion] Download URL: $DownloadUrl"
+
 # ---- Download & extract --------------------------------------------
 $TempDir = Join-Path $env:TEMP "elyxion-install-$(Get-Random)"
-try { New-Item -ItemType Directory -Force -Path $TempDir | Out-Null } catch {
-    Write-Host "[elyxion] Cannot create temp directory: $_" -ForegroundColor Red
-    Write-Host "Press any key to exit..." ; $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+try {
+    New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+} catch {
+    Log "[elyxion] ERROR: Cannot create temp directory: $_"
+    Log "[elyxion] Log saved to: $LogFile"
+    Read-Host "Press Enter to exit"
     exit 1
 }
 $ZipPath = Join-Path $TempDir "elyxion.zip"
 
-Write-Host "[elyxion] Downloading Elyxion..." -ForegroundColor Cyan
-Write-Host "[elyxion] $DownloadUrl" -ForegroundColor DarkGray
+Log "[elyxion] Downloading Elyxion..."
 
 try {
     $ProgressPreference = 'SilentlyContinue'
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath -UseBasicParsing
+    Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath -UseBasicParsing -ErrorAction Stop
+    Log "[elyxion] Download complete."
 } catch {
-    Write-Host "[elyxion] Download failed: $_" -ForegroundColor Red
-    Write-Host "[elyxion] Check your internet connection or try a specific version:" -ForegroundColor Red
-    Write-Host "[elyxion]   `$env:ELYXION_VERSION='v1.0.0'; .\install.ps1" -ForegroundColor Red
-    Write-Host "Press any key to exit..." ; $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Log "[elyxion] ERROR: Download failed."
+    Log "[elyxion] Error details: $_"
+    Log "[elyxion] Status: $($_.Exception.Response.StatusCode.value__) $($_.Exception.Response.StatusDescription)"
+    Log "[elyxion] Check your internet connection or try a specific version:"
+    Log "[elyxion]   `$env:ELYXION_VERSION='v1.0.0'; .\install.ps1"
+    Log "[elyxion] Log saved to: $LogFile"
+    Read-Host "Press Enter to exit"
     exit 1
 }
 
-# Verify the download looks valid (not a GitHub HTML page)
+# Verify the download
 $ZipSize = (Get-Item $ZipPath).Length
+Log "[elyxion] Downloaded: $ZipSize bytes"
+
 if ($ZipSize -lt 1024) {
-    Write-Host "[elyxion] Downloaded file is too small ($ZipSize bytes) — it may be a GitHub error page." -ForegroundColor Red
-    Write-Host "[elyxion] This usually means no releases exist yet, or the version tag is wrong." -ForegroundColor Red
+    Log "[elyxion] ERROR: Downloaded file is too small ($ZipSize bytes)."
+    Log "[elyxion] This usually means no releases exist yet, or the version tag is wrong."
+    # Show the first few bytes to help debug
+    $head = Get-Content -Path $ZipPath -TotalCount 5 -Raw -ErrorAction SilentlyContinue
+    Log "[elyxion] File begins with: $head"
     if ($Version -eq "latest") {
-        Write-Host "[elyxion] Try pinning a specific version: `$env:ELYXION_VERSION='v1.0.0'; .\install.ps1" -ForegroundColor Red
+        Log "[elyxion] Try pinning a specific version: `$env:ELYXION_VERSION='v1.0.0'; .\install.ps1"
     }
-    Write-Host "Press any key to exit..." ; $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Log "[elyxion] Log saved to: $LogFile"
+    Read-Host "Press Enter to exit"
     exit 1
 }
 
 # Remove previous install
 if (Test-Path $InstallDir) {
-    Write-Host "[elyxion] Removing previous installation at $InstallDir" -ForegroundColor Cyan
-    try { Remove-Item -Recurse -Force $InstallDir -ErrorAction Stop } catch {
-        Write-Host "[elyxion] Warning: could not fully clean old install (files may be in use)" -ForegroundColor Yellow
+    Log "[elyxion] Removing previous installation at $InstallDir"
+    try {
+        Remove-Item -Recurse -Force $InstallDir -ErrorAction Stop
+    } catch {
+        Log "[elyxion] WARNING: Could not fully clean old install: $_"
     }
 }
 
-Write-Host "[elyxion] Extracting to $InstallDir..." -ForegroundColor Cyan
+Log "[elyxion] Extracting to $InstallDir..."
 try {
-    Expand-Archive -Path $ZipPath -DestinationPath $InstallDir -Force
+    Expand-Archive -Path $ZipPath -DestinationPath $InstallDir -Force -ErrorAction Stop
+    Log "[elyxion] Extraction complete."
 } catch {
-    Write-Host "[elyxion] Extraction failed: $_" -ForegroundColor Red
-    Write-Host "Press any key to exit..." ; $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Log "[elyxion] ERROR: Extraction failed: $_"
+    Log "[elyxion] Log saved to: $LogFile"
+    Read-Host "Press Enter to exit"
     exit 1
 }
 
 # Clean up temp
 try { Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue } catch {}
+
+# ---- Log extracted files -------------------------------------------
+Log "[elyxion] Extracted files:"
+try {
+    Get-ChildItem -Recurse $InstallDir | ForEach-Object {
+        $size = if ($_.PSIsContainer) { "[dir]" } else { "$($_.Length) bytes" }
+        Log "  $($_.FullName.Replace($InstallDir, '.')) ($size)"
+    }
+} catch {
+    Log "  (could not enumerate)"
+}
 
 # ---- Locate binary ------------------------------------------------
 $BinDir = "$InstallDir\bin"
@@ -96,70 +168,100 @@ if (-not (Test-Path $ElyxionExe)) {
     # Older releases had a flat layout
     $ElyxionExe = "$InstallDir\elyxion.exe"
     $BinDir = $InstallDir
+    Log "[elyxion] Using flat layout (legacy archive format)"
 }
 
 if (-not (Test-Path $ElyxionExe)) {
-    Write-Host "[elyxion] elyxion.exe not found." -ForegroundColor Red
-    Write-Host "[elyxion] Contents of $InstallDir :" -ForegroundColor Yellow
-    try { Get-ChildItem -Recurse -Name $InstallDir | ForEach-Object { Write-Host "  $_" } } catch {}
-    Write-Host "Press any key to exit..." ; $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Log "[elyxion] ERROR: elyxion.exe not found in $InstallDir"
+    Log "[elyxion] Log saved to: $LogFile"
+    Read-Host "Press Enter to exit"
     exit 1
 }
 
-# ---- Create convenience wrappers if needed -------------------------
+Log "[elyxion] Binary found: $ElyxionExe"
+
+# ---- Create convenience wrappers -----------------------------------
 # If the release archive didn't come with .cmd launchers, create them.
 if (-not (Test-Path "$BinDir\elyxion.cmd")) {
-    @"
-@echo off
-""%~dp0elyxion.exe"" %*
-"@ | Out-File -FilePath "$BinDir\elyxion.cmd" -Encoding ASCII -ErrorAction SilentlyContinue
+    $wrapper = '@echo off' + "`r`n" + '"%~dp0elyxion.exe" %*' + "`r`n"
+    $wrapper | Out-File -FilePath "$BinDir\elyxion.cmd" -Encoding ASCII -ErrorAction SilentlyContinue
+    Log "[elyxion] Created elyxion.cmd"
+} else {
+    Log "[elyxion] Using existing elyxion.cmd"
 }
 
 if (-not (Test-Path "$BinDir\elyx.cmd")) {
-    @"
-@echo off
-""%~dp0elyxion.exe"" --package-manager %*
-"@ | Out-File -FilePath "$BinDir\elyx.cmd" -Encoding ASCII -ErrorAction SilentlyContinue
+    $wrapper = '@echo off' + "`r`n" + '"%~dp0elyxion.exe" --package-manager %*' + "`r`n"
+    $wrapper | Out-File -FilePath "$BinDir\elyx.cmd" -Encoding ASCII -ErrorAction SilentlyContinue
+    Log "[elyxion] Created elyx.cmd"
+} else {
+    Log "[elyxion] Using existing elyx.cmd"
 }
 
 # ---- Setup PATH ----------------------------------------------------
 $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+Log "[elyxion] Current user PATH length: $($UserPath.Length) chars"
 
 if ($UserPath -notlike "*$BinDir*") {
-    Write-Host "[elyxion] Adding $BinDir to your user PATH..." -ForegroundColor Cyan
+    Log "[elyxion] Adding $BinDir to user PATH..."
     [Environment]::SetEnvironmentVariable(
         "PATH",
         "$UserPath;$BinDir",
         "User"
     )
     $env:PATH = "$env:PATH;$BinDir"
+    Log "[elyxion] PATH updated."
 } else {
-    Write-Host "[elyxion] $BinDir is already on your PATH." -ForegroundColor Green
+    Log "[elyxion] $BinDir is already on PATH."
 }
 
 # ---- Verify ---------------------------------------------------------
+Log "[elyxion] Verifying installation..."
 try {
-    $ElyxionVersion = & $ElyxionExe --version 2>&1
-    Write-Host ""
-    Write-Host "[elyxion] Elyxion installed successfully!" -ForegroundColor Green
-    Write-Host "[elyxion] $ElyxionVersion" -ForegroundColor White
+    $ElyxionVersion = & $ElyxionExe --version 2>&1 | Out-String
+    Log ""
+    Log "=============================================="
+    Log "[elyxion] SUCCESS — Elyxion installed!"
+    Log "[elyxion] $($ElyxionVersion.Trim())"
+    Log "=============================================="
 } catch {
-    Write-Host "[elyxion] Binary exists but could not run. It may be incompatible with your Windows version." -ForegroundColor Red
-    Write-Host "Press any key to exit..." ; $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Log "[elyxion] ERROR: Binary exists but could not run."
+    Log "[elyxion] Error: $_"
+    Log "[elyxion] The binary may be incompatible with your Windows version."
+    Log "[elyxion] Log saved to: $LogFile"
+    Read-Host "Press Enter to exit"
     exit 1
 }
 
 # ---- Done ----------------------------------------------------------
-Write-Host ""
-Write-Host "  Quick start:" -ForegroundColor White
-Write-Host "    elyxion --version" -ForegroundColor White
-Write-Host "    elyxion --repl" -ForegroundColor White
-Write-Host "    elyx init" -ForegroundColor White
-Write-Host "    elyx install <package>" -ForegroundColor White
-Write-Host ""
-Write-Host "  To uninstall:" -ForegroundColor White
-Write-Host "    Remove-Item -Recurse -Force $InstallDir" -ForegroundColor White
-Write-Host "    (Then remove $BinDir from your PATH via System Properties)" -ForegroundColor White
-Write-Host ""
+Log ""
+Log "  Quick start:"
+Log "    elyxion --version"
+Log "    elyxion --repl"
+Log "    elyx init"
+Log "    elyx install <package>"
+Log ""
+Log "  Install log: $LogFile"
+Log ""
+Log "  To uninstall:"
+Log "    Remove-Item -Recurse -Force $InstallDir"
+Log "    (Then remove $BinDir from your PATH via System Properties)"
+Log ""
+Log "[elyxion] Restart your terminal to use elyxion."
+Log "=== Install complete at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ==="
 
-Write-Host "[elyxion] Restart your terminal or run 'refreshenv' to use elyxion immediately." -ForegroundColor Yellow
+# Clean up transcript
+if ($usingTranscript) {
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
+}
+
+# Also copy the log to the install dir for easy access
+try {
+    if ($LogFile -ne (Join-Path $InstallDir "install.log")) {
+        Copy-Item $LogFile (Join-Path $InstallDir "install.log") -Force -ErrorAction SilentlyContinue
+    }
+} catch {}
+
+# Keep window open
+Write-Host ""
+Write-Host "Log saved to: $LogFile" -ForegroundColor Cyan

@@ -2,7 +2,7 @@
 # install.sh — Elyxion one-line installer for Linux and macOS
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/<repo>/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash
 #
 # Or download and run:
 #   chmod +x install.sh && ./install.sh
@@ -15,6 +15,8 @@
 #
 # Set ELYXION_VERSION to pin a specific release (e.g. v1.0.0).
 # Set ELYXION_INSTALL_DIR to change the install directory.
+#
+# A full log is saved to ~/.elyxion/install.log
 
 set -euo pipefail
 
@@ -23,6 +25,32 @@ ELYXION_REPO="${ELYXION_REPO:-xyz-elyxion/elyxion-cli}"
 ELYXION_VERSION="${ELYXION_VERSION:-latest}"
 ELYXION_INSTALL_DIR="${ELYXION_INSTALL_DIR:-$HOME/.elyxion}"
 ELYXION_BIN_DIR="${ELYXION_BIN_DIR:-}"
+ELYXION_LOG="${ELYXION_LOG:-$ELYXION_INSTALL_DIR/install.log}"
+
+# ---- Logging setup ------------------------------------------------
+# Create install dir early so the log can live there
+mkdir -p "$(dirname "$ELYXION_LOG")" 2>/dev/null || true
+
+# Redirect all output to both the terminal and the log file
+if command -v tee >/dev/null 2>&1; then
+  exec > >(tee -a "$ELYXION_LOG") 2>&1
+else
+  # Fallback: just log; terminal output is lost but log is saved
+  exec >> "$ELYXION_LOG" 2>&1
+fi
+
+echo "=== Elyxion Installer Log ==="
+echo "Date:       $(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)"
+echo "User:       $(whoami 2>/dev/null || echo unknown)"
+echo "OS:         $(uname -s)"
+echo "Arch:       $(uname -m)"
+echo "Repo:       $ELYXION_REPO"
+echo "Version:    $ELYXION_VERSION"
+echo "Install:    $ELYXION_INSTALL_DIR"
+echo "Log:        $ELYXION_LOG"
+echo "PWD:        $(pwd)"
+echo "=============================="
+echo ""
 
 # ---- Color helpers -------------------------------------------------
 BOLD=""; RED=""; GREEN=""; CYAN=""; NC=""
@@ -34,9 +62,9 @@ if [ -t 2 ] && command -v tput >/dev/null 2>&1; then
   NC="$(tput sgr0)"
 fi
 
-info()  { printf "%b" "${CYAN}${BOLD}[elyxion]${NC} $1\n" >&2; }
-ok()    { printf "%b" "${GREEN}${BOLD}[elyxion]${NC} $1\n" >&2; }
-err()   { printf "%b" "${RED}${BOLD}[elyxion]${NC} $1\n" >&2; }
+info()  { printf "%b" "${CYAN}${BOLD}[elyxion]${NC} $1\n" >&2 || printf "%b" "[elyxion] $1\n"; }
+ok()    { printf "%b" "${GREEN}${BOLD}[elyxion]${NC} $1\n" >&2 || printf "%b" "[elyxion] $1\n"; }
+err()   { printf "%b" "${RED}${BOLD}[elyxion]${NC} $1\n" >&2 || printf "%b" "[elyxion] $1\n"; }
 
 # ---- Platform detection --------------------------------------------
 OS="$(uname -s)"
@@ -48,6 +76,7 @@ case "$OS" in
   *)
     err "Unsupported OS: $OS"
     err "Elyxion currently supports Linux and macOS."
+    echo ""; echo "Log saved to: $ELYXION_LOG"
     exit 1
     ;;
 esac
@@ -57,6 +86,7 @@ case "$ARCH" in
   aarch64|arm64) ARCH="arm64" ;;
   *)
     err "Unsupported architecture: $ARCH"
+    echo ""; echo "Log saved to: $ELYXION_LOG"
     exit 1
     ;;
 esac
@@ -81,36 +111,47 @@ else
   DOWNLOAD_URL="${RELEASE_URL}/download/${ELYXION_VERSION}/${ARCHIVE_NAME}.tar.gz"
 fi
 
+info "Download URL: $DOWNLOAD_URL"
+
 # ---- Download & extract --------------------------------------------
 TMPDIR="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR"' EXIT
 
 info "Downloading Elyxion..."
 if command -v curl >/dev/null 2>&1; then
-  if ! curl -fL --progress-bar -o "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL"; then
+  if ! curl -fL --progress-bar -o "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL" 2>&1; then
     # Try without progress bar for older curl
-    if ! curl -fL -o "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL"; then
+    if ! curl -fL -o "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL" 2>&1; then
       err "Download failed. Check your internet connection or try a specific version:"
       err "  ELYXION_VERSION=v1.0.0 ./install.sh"
+      echo ""; echo "Log saved to: $ELYXION_LOG"
+      rm -rf "$TMPDIR"
       exit 1
     fi
   fi
 elif command -v wget >/dev/null 2>&1; then
-  if ! wget -q --show-progress -O "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL"; then
+  if ! wget -q --show-progress -O "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL" 2>&1; then
     err "Download failed."
+    echo ""; echo "Log saved to: $ELYXION_LOG"
+    rm -rf "$TMPDIR"
     exit 1
   fi
 else
   err "Neither curl nor wget found. Install one of them and try again."
+  echo ""; echo "Log saved to: $ELYXION_LOG"
+  rm -rf "$TMPDIR"
   exit 1
 fi
 
 # Verify the download looks valid
-if [ "$(wc -c < "$TMPDIR/elyxion.tar.gz")" -lt 1024 ]; then
-  err "Downloaded file is too small — it may be a GitHub error page."
+DOWNLOAD_SIZE="$(wc -c < "$TMPDIR/elyxion.tar.gz")"
+info "Downloaded: ${DOWNLOAD_SIZE} bytes"
+if [ "$DOWNLOAD_SIZE" -lt 1024 ]; then
+  err "Downloaded file is too small (${DOWNLOAD_SIZE} bytes) — it may be a GitHub error page."
   if [ "$ELYXION_VERSION" = "latest" ]; then
     err "Try pinning a version: ELYXION_VERSION=v1.0.0 ./install.sh"
   fi
+  echo ""; echo "Log saved to: $ELYXION_LOG"
+  rm -rf "$TMPDIR"
   exit 1
 fi
 
@@ -136,6 +177,12 @@ if [ -d "$ELYXION_INSTALL_DIR/bin" ]; then
   chmod +x "$ELYXION_INSTALL_DIR/bin/elyxion" 2>/dev/null || true
   chmod +x "$ELYXION_INSTALL_DIR/bin/elyx"    2>/dev/null || true
 fi
+
+# Show what was extracted
+info "Extracted files:"
+find "$ELYXION_INSTALL_DIR" -type f | sort | while read -r f; do
+  printf "  %s (%s bytes)\n" "$f" "$(wc -c < "$f")"
+done
 
 # ---- Setup PATH ----------------------------------------------------
 setup_path() {
@@ -214,9 +261,12 @@ clean_old_wrappers
 setup_path
 
 # ---- Verify installation -------------------------------------------
+info "Verifying installation..."
 if ! "$ELYXION_INSTALL_DIR/elyxion" --version >/dev/null 2>&1; then
   err "Installation verification failed."
   err "The binary may be incompatible with your system."
+  echo ""; echo "Log saved to: $ELYXION_LOG"
+  rm -rf "$TMPDIR"
   exit 1
 fi
 
@@ -263,7 +313,14 @@ echo "    elyxion --repl"
 echo "    elyx init"
 echo "    elyx install <package>"
 echo ""
+echo "  Install log: ${ELYXION_LOG}"
+echo ""
 echo "  To uninstall:"
 echo "    rm -rf ${ELYXION_INSTALL_DIR}"
 echo "    rm -f ${BIN_DIR_USED}/elyxion ${BIN_DIR_USED}/elyx"
 echo ""
+
+# Clean up temp
+rm -rf "$TMPDIR"
+
+echo "=== Install complete at $(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u) ==="
