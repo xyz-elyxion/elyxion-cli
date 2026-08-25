@@ -4,9 +4,15 @@
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netinet/in.h>
+#include <arpa/inet.h>
 extern char** environ;
 #endif
 
@@ -391,6 +397,217 @@ void Environment::SetupNativeFunctions() {
         v8::String::Utf8Value path_str(info.GetIsolate(), info[0]);
         std::filesystem::remove_all(*path_str);
       })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // ---- Native TCP networking ---------------------------------
+  // All TCP V8 callbacks get the Environment via isolate->GetData(0)
+  // __elyxion_tcp_listen(port, host, callback) -> listenerId
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_tcp_listen").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (info.Length() < 1) return;
+        int port = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0);
+        std::string host = "0.0.0.0";
+        if (info.Length() >= 2 && info[1]->IsString()) {
+          v8::String::Utf8Value h(isolate, info[1]);
+          host = *h;
+        }
+
+        auto* listener = new TCPListener();
+        listener->isolate = isolate;
+        listener->env = env;
+        if (info.Length() >= 3 && info[2]->IsFunction()) {
+          listener->on_connection.Reset(isolate, info[2].As<v8::Function>());
+        }
+
+        uv_tcp_init(env->event_loop(), &listener->handle);
+        listener->handle.data = listener;
+
+        struct sockaddr_in addr;
+        uv_ip4_addr(host.c_str(), port, &addr);
+        int r = uv_tcp_bind(&listener->handle, (const struct sockaddr*)&addr, 0);
+        if (r != 0) {
+          delete listener;
+          info.GetReturnValue().Set(v8::Integer::New(isolate, -1));
+          return;
+        }
+
+        r = uv_listen((uv_stream_t*)&listener->handle, 128, [](uv_stream_t* server, int status) {
+          if (status < 0) return;
+          auto* lst = static_cast<TCPListener*>(server->data);
+          auto* env2 = lst->env;
+          auto* iso = lst->isolate;
+
+          auto* conn = new TCPConnection();
+          conn->isolate = iso;
+          conn->env = env2;
+          uv_tcp_init(env2->event_loop(), &conn->handle);
+          conn->handle.data = conn;
+
+          int r2 = uv_accept(server, (uv_stream_t*)&conn->handle);
+          if (r2 != 0) { delete conn; return; }
+
+          int connId = env2->AllocConnectionId();
+          env2->connections()[connId] = conn;
+
+          uv_read_start((uv_stream_t*)&conn->handle,
+            [](uv_handle_t*, size_t suggested, uv_buf_t* buf) {
+              buf->base = new char[suggested];
+              buf->len = suggested;
+            },
+            [](uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
+              auto* c = static_cast<TCPConnection*>(stream->data);
+              if (nread < 0) {
+                delete[] buf->base;
+                if (nread == UV_EOF) {
+                  v8::Isolate* iso2 = c->isolate;
+                  if (!c->on_end.IsEmpty()) {
+                    v8::HandleScope hs(iso2);
+                    auto ctx = iso2->GetCurrentContext();
+                    v8::Local<v8::Function> cb = c->on_end.Get(iso2);
+                    cb->Call(ctx, ctx->Global(), 0, nullptr);
+                  }
+                }
+                return;
+              }
+              v8::Isolate* iso2 = c->isolate;
+              if (!c->on_data.IsEmpty()) {
+                v8::HandleScope hs(iso2);
+                auto ctx = iso2->GetCurrentContext();
+                v8::Local<v8::Value> arg = v8::String::NewFromUtf8(iso2,
+                    std::string(buf->base, nread).c_str()).ToLocalChecked();
+                v8::Local<v8::Function> cb = c->on_data.Get(iso2);
+                cb->Call(ctx, ctx->Global(), 1, &arg);
+              }
+              delete[] buf->base;
+            });
+
+          if (!lst->on_connection.IsEmpty()) {
+            v8::HandleScope hs(iso);
+            auto ctx = iso->GetCurrentContext();
+            v8::Local<v8::Value> arg = v8::Integer::New(iso, connId);
+            v8::Local<v8::Function> cb = lst->on_connection.Get(iso);
+            cb->Call(ctx, ctx->Global(), 1, &arg);
+          }
+        });
+
+        if (r != 0) {
+          uv_close((uv_handle_t*)&listener->handle, nullptr);
+          delete listener;
+          info.GetReturnValue().Set(v8::Integer::New(isolate, -1));
+          return;
+        }
+
+        int id = env->AllocListenerId();
+        env->listeners()[id] = listener;
+        info.GetReturnValue().Set(v8::Integer::New(isolate, id));
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_tcp_close_listener(listenerId)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_tcp_close_listener").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (info.Length() < 1) return;
+        int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+        auto& listeners = env->listeners();
+        auto it = listeners.find(id);
+        if (it != listeners.end()) {
+          uv_close((uv_handle_t*)&it->second->handle, [](uv_handle_t* h) {
+            delete static_cast<TCPListener*>(h->data);
+          });
+          listeners.erase(it);
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_socket_on_data(connId, callback)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_socket_on_data").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (info.Length() < 2) return;
+        int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+        auto it = env->connections().find(id);
+        if (it != env->connections().end() && info[1]->IsFunction()) {
+          it->second->on_data.Reset(isolate, info[1].As<v8::Function>());
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_socket_on_end(connId, callback)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_socket_on_end").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (info.Length() < 2) return;
+        int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+        auto it = env->connections().find(id);
+        if (it != env->connections().end() && info[1]->IsFunction()) {
+          it->second->on_end.Reset(isolate, info[1].As<v8::Function>());
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_socket_write(connId, data)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_socket_write").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (info.Length() < 2) return;
+        int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+        auto it = env->connections().find(id);
+        if (it == env->connections().end() || it->second->closed) {
+          info.GetReturnValue().Set(v8::Boolean::New(isolate, false));
+          return;
+        }
+        v8::String::Utf8Value data(isolate, info[1]);
+        auto* buf = new uv_buf_t();
+        buf->base = new char[data.length()];
+        buf->len = data.length();
+        memcpy(buf->base, *data, data.length());
+        auto* req = new uv_write_t();
+        req->data = buf;
+        uv_write(req, (uv_stream_t*)&it->second->handle, buf, 1, [](uv_write_t* wreq, int) {
+          auto* b = static_cast<uv_buf_t*>(wreq->data);
+          delete[] b->base;
+          delete b;
+          delete wreq;
+        });
+        info.GetReturnValue().Set(v8::Boolean::New(isolate, true));
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_socket_close(connId)
+  // Uses uv_shutdown to flush pending writes before closing.
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_socket_close").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (info.Length() < 1) return;
+        int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+        auto it = env->connections().find(id);
+        if (it == env->connections().end() || it->second->closed) return;
+        it->second->closed = true;
+        uv_read_stop((uv_stream_t*)&it->second->handle);
+        auto* conn = it->second;
+        env->connections().erase(it);
+
+        // Shutdown (send FIN), then close the handle in the callback.
+        // This ensures all queued uv_write calls flush before the socket
+        // is torn down.
+        auto* shutdown_req = new uv_shutdown_t();
+        shutdown_req->data = conn;
+        uv_shutdown(shutdown_req, (uv_stream_t*)&conn->handle, [](uv_shutdown_t* req, int) {
+          auto* c = static_cast<TCPConnection*>(req->data);
+          delete req;
+          uv_close((uv_handle_t*)&c->handle, [](uv_handle_t* h) {
+            delete static_cast<TCPConnection*>(h->data);
+          });
+        });
+      })->GetFunction(context()).ToLocalChecked()).Check();
 }
 
 bool Environment::Bootstrap() {
@@ -510,6 +727,7 @@ void Environment::SetupRequire() {
   RegisterBuiltin("dns", "modules/net.js");
   RegisterBuiltin("tls", "modules/net.js");
   RegisterBuiltin("readline", "modules/readline.js");
+  RegisterBuiltin("tcp", "modules/tcp.js");
 
   // Expose require to JS
   isolate_->SetData(0, this);
