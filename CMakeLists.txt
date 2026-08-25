@@ -146,6 +146,7 @@ install(TARGETS elyxion RUNTIME DESTINATION bin)
 install(DIRECTORY lib/ DESTINATION lib)
 install(PROGRAMS bin/elyx DESTINATION bin)
 install(FILES bin/elyxion.cmd bin/elyx.cmd DESTINATION bin)
+install(FILES scripts/install.sh scripts/install.ps1 DESTINATION share/elyxion)
 install(FILES README.md LICENSE DESTINATION share/elyxion)
 
 message(STATUS "")

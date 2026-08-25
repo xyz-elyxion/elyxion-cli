@@ -3,6 +3,37 @@
 Elyxion is a standalone JavaScript runtime and package manager built with V8 and libuv.
 The distributed commands are native executables or native-executable launchers. Running Elyxion does not require Node.js, npm, node-gyp, or a `node_modules` directory.
 
+## Quick Install
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/elyxion-js/elyxion/main/scripts/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+iwr -useb https://raw.githubusercontent.com/elyxion-js/elyxion/main/scripts/install.ps1 | iex
+```
+
+After installing, restart your terminal — then `elyxion` and `elyx` are available globally:
+
+```bash
+elyxion --version
+elyxion --repl
+elyx init
+elyx install <package>
+```
+
+To pin a specific version:
+
+```bash
+ELYXION_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/elyxion-js/elyxion/main/scripts/install.sh | bash
+```
+
+## Manual Download
+
+Download the latest archive from [GitHub Releases](https://github.com/elyxion-js/elyxion/releases), extract it, and add the `bin/` directory to your PATH.
+
 ## Requirements
 
 Runtime distributions need only the files shipped in the release archive and the platform's normal C/C++ runtime libraries.

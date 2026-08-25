@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# install.sh — Elyxion one-line installer for Linux and macOS
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/<repo>/main/scripts/install.sh | bash
+#
+# Or download and run:
+#   chmod +x install.sh && ./install.sh
+#
+# What it does:
+#   1. Detects your OS and architecture
+#   2. Downloads the latest Elyxion release from GitHub
+#   3. Extracts it to ~/.elyxion/
+#   4. Makes 'elyxion' and 'elyx' available on your PATH
+#
+# Set ELYXION_VERSION to pin a specific release (e.g. v1.0.0).
+# Set ELYXION_INSTALL_DIR to change the install directory.
+
+set -euo pipefail
+
+# ---- Configuration ------------------------------------------------
+ELYXION_REPO="${ELYXION_REPO:-elyxion-js/elyxion}"
+ELYXION_VERSION="${ELYXION_VERSION:-latest}"
+ELYXION_INSTALL_DIR="${ELYXION_INSTALL_DIR:-$HOME/.elyxion}"
+ELYXION_BIN_DIR="${ELYXION_BIN_DIR:-}"
+
+# ---- Color helpers -------------------------------------------------
+BOLD=""; RED=""; GREEN=""; CYAN=""; NC=""
+if [ -t 2 ] && command -v tput >/dev/null 2>&1; then
+  BOLD="$(tput bold)"
+  RED="$(tput setaf 1)"
+  GREEN="$(tput setaf 2)"
+  CYAN="$(tput setaf 6)"
+  NC="$(tput sgr0)"
+fi
+
+info()  { printf "%b" "${CYAN}${BOLD}[elyxion]${NC} $1\n" >&2; }
+ok()    { printf "%b" "${GREEN}${BOLD}[elyxion]${NC} $1\n" >&2; }
+err()   { printf "%b" "${RED}${BOLD}[elyxion]${NC} $1\n" >&2; }
+
+# ---- Platform detection --------------------------------------------
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+
+case "$OS" in
+  Linux)  PLATFORM="linux" ;;
+  Darwin) PLATFORM="macos"  ;;
+  *)
+    err "Unsupported OS: $OS"
+    err "Elyxion currently supports Linux and macOS."
+    exit 1
+    ;;
+esac
+
+case "$ARCH" in
+  x86_64|amd64) ARCH="x64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  *)
+    err "Unsupported architecture: $ARCH"
+    exit 1
+    ;;
+esac
+
+# On macOS, the universal binary is just "macos" (no arch suffix).
+if [ "$PLATFORM" = "macos" ]; then
+  ARCHIVE_NAME="elyxion-macos"
+elif [ "$PLATFORM" = "linux" ] && [ "$ARCH" = "arm64" ]; then
+  ARCHIVE_NAME="elyxion-linux-arm64"
+else
+  ARCHIVE_NAME="elyxion-linux-x64"
+fi
+
+info "Platform: ${PLATFORM}/${ARCH}"
+info "Install directory: ${ELYXION_INSTALL_DIR}"
+
+# ---- Determine release URL -----------------------------------------
+RELEASE_URL="https://github.com/${ELYXION_REPO}/releases"
+if [ "$ELYXION_VERSION" = "latest" ]; then
+  DOWNLOAD_URL="${RELEASE_URL}/latest/download/${ARCHIVE_NAME}.tar.gz"
+else
+  DOWNLOAD_URL="${RELEASE_URL}/download/${ELYXION_VERSION}/${ARCHIVE_NAME}.tar.gz"
+fi
+
+# ---- Download & extract --------------------------------------------
+TMPDIR="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR"' EXIT
+
+info "Downloading Elyxion..."
+if command -v curl >/dev/null 2>&1; then
+  if ! curl -fL --progress-bar -o "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL"; then
+    # Try without progress bar for older curl
+    if ! curl -fL -o "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL"; then
+      err "Download failed. Check your internet connection or try a specific version:"
+      err "  ELYXION_VERSION=v1.0.0 ./install.sh"
+      exit 1
+    fi
+  fi
+elif command -v wget >/dev/null 2>&1; then
+  if ! wget -q --show-progress -O "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL"; then
+    err "Download failed."
+    exit 1
+  fi
+else
+  err "Neither curl nor wget found. Install one of them and try again."
+  exit 1
+fi
+
+# Verify the download looks valid
+if [ "$(wc -c < "$TMPDIR/elyxion.tar.gz")" -lt 1024 ]; then
+  err "Downloaded file is too small — it may be a GitHub error page."
+  if [ "$ELYXION_VERSION" = "latest" ]; then
+    err "Try pinning a version: ELYXION_VERSION=v1.0.0 ./install.sh"
+  fi
+  exit 1
+fi
+
+# Remove any previous install
+if [ -d "$ELYXION_INSTALL_DIR" ]; then
+  info "Removing previous installation at ${ELYXION_INSTALL_DIR}"
+  rm -rf "$ELYXION_INSTALL_DIR"
+fi
+
+mkdir -p "$ELYXION_INSTALL_DIR"
+
+info "Extracting to ${ELYXION_INSTALL_DIR}..."
+tar -xzf "$TMPDIR/elyxion.tar.gz" -C "$ELYXION_INSTALL_DIR" --strip-components=0
+
+# Rename elyxion.bin → elyxion (the actual binary)
+if [ -f "$ELYXION_INSTALL_DIR/elyxion.bin" ]; then
+  mv "$ELYXION_INSTALL_DIR/elyxion.bin" "$ELYXION_INSTALL_DIR/elyxion"
+  chmod +x "$ELYXION_INSTALL_DIR/elyxion"
+fi
+
+# Make launcher scripts executable
+if [ -d "$ELYXION_INSTALL_DIR/bin" ]; then
+  chmod +x "$ELYXION_INSTALL_DIR/bin/elyxion" 2>/dev/null || true
+  chmod +x "$ELYXION_INSTALL_DIR/bin/elyx"    2>/dev/null || true
+fi
+
+# ---- Setup PATH ----------------------------------------------------
+setup_path() {
+  local bindir="$1"
+
+  # If user specified a bin dir, use it
+  if [ -n "$ELYXION_BIN_DIR" ]; then
+    mkdir -p "$ELYXION_BIN_DIR"
+    create_wrappers "$ELYXION_BIN_DIR"
+    return
+  fi
+
+  # Try common system/user bin directories
+  local candidates=()
+
+  # $HOME/.local/bin (XDG standard, no sudo needed)
+  candidates+=("$HOME/.local/bin")
+
+  # /usr/local/bin (system-wide, may need sudo)
+  if [ -w /usr/local/bin ] || [ -w /usr/local ]; then
+    candidates+=("/usr/local/bin")
+  fi
+
+  for cand in "${candidates[@]}"; do
+    if mkdir -p "$cand" 2>/dev/null && [ -w "$cand" ]; then
+      create_wrappers "$cand"
+      ok "Commands installed to ${cand}/"
+      return
+    fi
+  done
+
+  # Fallback: ~/.local/bin (create if needed)
+  mkdir -p "$HOME/.local/bin"
+  create_wrappers "$HOME/.local/bin"
+  ok "Commands installed to ${HOME}/.local/bin/"
+}
+
+create_wrappers() {
+  local bindir="$1"
+  local install_dir="$ELYXION_INSTALL_DIR"
+
+  # Create elyxion wrapper
+  cat > "$bindir/elyxion" <<WRAPPER
+#!/bin/sh
+# Elyxion wrapper — installed by install.sh
+export ELYXION_HOME="\${ELYXION_HOME:-${install_dir}}"
+exec "\${ELYXION_HOME}/elyxion" "\$@"
+WRAPPER
+  chmod +x "$bindir/elyxion"
+
+  # Create elyx wrapper
+  cat > "$bindir/elyx" <<WRAPPER
+#!/bin/sh
+# Elyx wrapper — installed by install.sh
+export ELYXION_HOME="\${ELYXION_HOME:-${install_dir}}"
+exec "\${ELYXION_HOME}/elyxion" --package-manager "\$@"
+WRAPPER
+  chmod +x "$bindir/elyx"
+}
+
+# Remove old wrappers from common locations (avoid stale installs)
+clean_old_wrappers() {
+  for d in /usr/local/bin "$HOME/.local/bin" "$HOME/bin"; do
+    for cmd in elyxion elyx; do
+      if [ -f "$d/$cmd" ] && grep -q "install.sh" "$d/$cmd" 2>/dev/null; then
+        rm -f "$d/$cmd" 2>/dev/null || true
+      fi
+    done
+  done
+}
+
+clean_old_wrappers
+setup_path
+
+# ---- Verify installation -------------------------------------------
+if ! "$ELYXION_INSTALL_DIR/elyxion" --version >/dev/null 2>&1; then
+  err "Installation verification failed."
+  err "The binary may be incompatible with your system."
+  exit 1
+fi
+
+# ---- PATH guidance -------------------------------------------------
+BIN_DIR_USED="$HOME/.local/bin"
+if [ -n "$ELYXION_BIN_DIR" ]; then
+  BIN_DIR_USED="$ELYXION_BIN_DIR"
+fi
+
+# Check if the bin dir is on PATH
+case ":$PATH:" in
+  *:"$BIN_DIR_USED":*)
+    # Already on PATH
+    ;;
+  *)
+    SHELL_RC=""
+    case "${SHELL:-}" in
+      */zsh)  SHELL_RC="$HOME/.zshrc" ;;
+      */bash) SHELL_RC="$HOME/.bashrc" ;;
+      */fish) SHELL_RC="$HOME/.config/fish/config.fish" ;;
+      *)      SHELL_RC="$HOME/.profile" ;;
+    esac
+
+    printf "%b" "${CYAN}"
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  Add ${BIN_DIR_USED} to your PATH to use elyxion anywhere:"
+    echo "║"
+    echo "║    export PATH=\"${BIN_DIR_USED}:\$PATH\""
+    echo "║"
+    echo "║  Add the line above to ${SHELL_RC}"
+    echo "║  Then restart your terminal, or run:"
+    echo "║"
+    echo "║    source ${SHELL_RC}"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    printf "%b" "${NC}"
+    ;;
+esac
+
+# ---- Done ----------------------------------------------------------
+VERSION="$("$ELYXION_INSTALL_DIR/elyxion" --version 2>&1 || echo "unknown")"
+echo ""
+ok "Elyxion ${VERSION} installed successfully!"
+echo ""
+echo "  Quick start:"
+echo "    elyxion --version"
+echo "    elyxion --repl"
+echo "    elyx init"
+echo "    elyx install <package>"
+echo ""
+echo "  To uninstall:"
+echo "    rm -rf ${ELYXION_INSTALL_DIR}"
+echo "    rm -f ${BIN_DIR_USED}/elyxion ${BIN_DIR_USED}/elyx"
+echo ""
