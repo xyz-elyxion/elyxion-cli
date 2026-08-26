@@ -5,6 +5,24 @@ All notable changes to Elyxion CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-25
+
+### Fixed
+- `net`/`tcp` now bind real sockets: `require('net').createServer(...).listen(port)`
+  uses the native `__elyxion_tcp_*` libuv bindings instead of simulating a listen.
+- `setTimeout`/`setInterval` are wired into `uv_timer`, so timers actually fire and
+  keep the event loop alive (the process no longer exits while a server or timer
+  is pending).
+- `http.ServerResponse` now writes the response to the client socket, so
+  `http.createServer(...).listen(port)` actually serves responses (`res.write`/`res.end`
+  previously only accumulated the body and never sent bytes).
+- `process` is now an EventEmitter, so `process.on('SIGINT', ...)` and other process
+  event APIs work instead of throwing `process.on is not a function`.
+
+### Changed
+- The installer now pins a known-good release (`v1.1.0`) instead of defaulting to
+  `latest`, so a stale or broken tagged binary is never silently installed.
+
 ## [1.0.0] - 2026-08-22
 
 ### Added
@@ -106,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **1.1.0** - Real TCP sockets and working timers
 - **1.0.0** - Initial release with core runtime and package manager
 - **0.x.x** - Pre-release development versions
 
@@ -115,7 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 1. Update the version constants in the native runtime and release metadata
 2. Update `CHANGELOG.md` with new version
-3. Create git tag: `git tag v1.0.0`
+3. Create git tag: `git tag v1.1.0`
 4. Push changes: `git push && git push --tags`
 5. Create GitHub release with changelog
 

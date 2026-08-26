@@ -1,5 +1,6 @@
 #include "elyxion.h"
 #include "environment.h"
+#include "loop/event_loop.h"
 #include "isolate_data.h"
 #include <iostream>
 #include <fstream>
@@ -153,8 +154,11 @@ int StartWithIsolate(v8::Isolate::CreateParams* params, int argc, char* argv[]) 
     v8::Isolate::Scope isolate_scope(isolate);
     v8::HandleScope handle_scope(isolate);
     
+    // Create the event loop (owns uv_timer handles for setTimeout/setInterval)
+    EventLoop event_loop(isolate, default_loop);
+    
     // Create environment
-    Environment env(isolate, default_loop, ResourceRoot(argv[0]));
+    Environment env(isolate, default_loop, ResourceRoot(argv[0]), &event_loop);
     
     // Initialize
     if (!env.Initialize(filename)) {

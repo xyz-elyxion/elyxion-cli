@@ -6,8 +6,11 @@
 # Or save the script and run:
 #   .\install.ps1
 #
-# Set $env:ELYXION_VERSION to pin a specific release (e.g. v1.0.0).
+# Set $env:ELYXION_VERSION to pin a specific release (e.g. v1.1.0).
 # Set $env:ELYXION_INSTALL_DIR to change the install directory.
+#
+# NOTE: the default version is pinned to a known-good release rather than
+# "latest" so a broken or stale tagged binary is never silently installed.
 #
 # All output is saved to an install log. If something goes wrong, read:
 #   %LOCALAPPDATA%\Elyxion\install.log
@@ -17,7 +20,7 @@ $host.UI.RawUI.WindowTitle = "Elyxion Installer"
 
 # ---- Configuration ------------------------------------------------
 $Repo    = if ($env:ELYXION_REPO)    { $env:ELYXION_REPO }    else { "xyz-elyxion/elyxion-cli" }
-$Version = if ($env:ELYXION_VERSION) { $env:ELYXION_VERSION } else { "latest" }
+$Version = if ($env:ELYXION_VERSION) { $env:ELYXION_VERSION } else { "v1.1.0" }
 $InstallDir = if ($env:ELYXION_INSTALL_DIR) { $env:ELYXION_INSTALL_DIR } else { "$env:LOCALAPPDATA\Elyxion" }
 
 # ---- Logging -------------------------------------------------------
@@ -99,7 +102,7 @@ try {
     Log "[elyxion] Error details: $_"
     Log "[elyxion] Status: $($_.Exception.Response.StatusCode.value__) $($_.Exception.Response.StatusDescription)"
     Log "[elyxion] Check your internet connection or try a specific version:"
-    Log "[elyxion]   `$env:ELYXION_VERSION='v1.0.0'; .\install.ps1"
+    Log "[elyxion]   `$env:ELYXION_VERSION='v1.1.0'; .\install.ps1"
     Log "[elyxion] Log saved to: $LogFile"
     Read-Host "Press Enter to exit"
     exit 1
@@ -115,9 +118,7 @@ if ($ZipSize -lt 1024) {
     # Show the first few bytes to help debug
     $head = Get-Content -Path $ZipPath -TotalCount 5 -Raw -ErrorAction SilentlyContinue
     Log "[elyxion] File begins with: $head"
-    if ($Version -eq "latest") {
-        Log "[elyxion] Try pinning a specific version: `$env:ELYXION_VERSION='v1.0.0'; .\install.ps1"
-    }
+    Log "[elyxion] Try pinning a known-good version: `$env:ELYXION_VERSION='v1.1.0'; .\install.ps1"
     Log "[elyxion] Log saved to: $LogFile"
     Read-Host "Press Enter to exit"
     exit 1

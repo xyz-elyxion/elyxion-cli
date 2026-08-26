@@ -27,8 +27,10 @@ elyx install <package>
 To pin a specific version:
 
 ```bash
-ELYXION_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash
+ELYXION_VERSION=v1.1.0 curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash
 ```
+
+The installer defaults to a pinned, known-good release (`v1.1.0`) instead of `latest`, so a stale or broken tagged binary is never silently installed.
 
 ## Manual Download
 
@@ -131,7 +133,7 @@ elyx logout
 | `DELETE` | `/api/packages/:name/:version` | Unpublish a version (owner only) |
 | `GET` | `/api/search?q=` | Search packages |
 | `GET` | `/api/stats` | Package/user counts |
-| `GET` | `/health` | Health check (used by Render) |
+| `GET` | `/health` | Health check |
 
 Use a different registry:
 
@@ -148,15 +150,7 @@ elyxion site/server.js        # serve site + registry API on :3000
 
 `DATA_DIR` (default `site/data/`) holds `users.json`, `tokens.json`, and `packages.json`. Set `PUBLIC_URL` to the public base URL used in package metadata.
 
-### Deploying to Render
-
-The repo ships a [Render blueprint](render.yaml) and [Dockerfile](site/Dockerfile). The container downloads the latest Elyxion Linux release, builds the site if needed, and runs `site/server.js`:
-
-1. Push to GitHub.
-2. In Render: **New → Blueprint** → pick `xyz-elyxion/elyxion-cli`.
-3. The service deploys at `https://xyz-elyxion.onrender.com` with `/health` as the health check.
-
-> Persistent storage: the free tier uses an ephemeral filesystem, so accounts/packages reset on redeploy. Uncomment the `disk` block in `render.yaml` (paid plan) to mount `/data` permanently.
+The server is self-contained — deploy `site/` anywhere that can run the Elyxion binary (a VPS, a container, or a host like Render/Fly/Railway). Point the CLI at it with `elyx config set registry <url>`.
 
 ## CLI Options
 

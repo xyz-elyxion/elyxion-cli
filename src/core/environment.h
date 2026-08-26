@@ -11,6 +11,7 @@
 namespace elyxion {
 
 class Environment;
+class EventLoop;
 
 // Holds a libuv TCP listening socket and its JS on-connection callback.
 struct TCPListener {
@@ -34,7 +35,8 @@ struct TCPConnection {
 
 class Environment {
  public:
-  Environment(v8::Isolate* isolate, uv_loop_t* loop, const std::string& resource_root);
+  Environment(v8::Isolate* isolate, uv_loop_t* loop, const std::string& resource_root,
+              EventLoop* event_loop = nullptr);
   ~Environment();
 
   Environment(const Environment&) = delete;
@@ -46,6 +48,7 @@ class Environment {
 
   v8::Isolate* isolate() const { return isolate_; }
   uv_loop_t* event_loop() const { return loop_; }
+  EventLoop* timer_loop() const { return event_loop_; }
   v8::Local<v8::Context> context() const { return context_.Get(isolate_); }
 
   void PrintStackTrace(v8::Local<v8::Value> error);
@@ -76,6 +79,7 @@ class Environment {
 
   v8::Isolate* isolate_;
   uv_loop_t* loop_;
+  EventLoop* event_loop_;
   std::string resource_root_;
   std::string current_module_dir_;
   v8::HandleScope handle_scope_;

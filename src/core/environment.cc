@@ -1,5 +1,6 @@
 #include "environment.h"
 #include "elyxion.h"
+#include "loop/event_loop.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -22,9 +23,11 @@ extern char** environ;
 
 namespace elyxion {
 
-Environment::Environment(v8::Isolate* isolate, uv_loop_t* loop, const std::string& resource_root)
+Environment::Environment(v8::Isolate* isolate, uv_loop_t* loop, const std::string& resource_root,
+                         EventLoop* event_loop)
     : isolate_(isolate),
       loop_(loop),
+      event_loop_(event_loop),
       resource_root_(resource_root),
       current_module_dir_(resource_root),
       handle_scope_(isolate),
@@ -53,13 +56,6 @@ bool Environment::Initialize(const std::string& main_script) {
           std::cout << *str;
         }
         std::cout << std::endl;
-      }));
-
-  global_template->Set(
-      v8::String::NewFromUtf8(isolate_, "setTimeout").ToLocalChecked(),
-      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
-        // Timer implementation will be added
-        info.GetReturnValue().Set(v8::Integer::New(info.GetIsolate(), 0));
       }));
 
   v8::Local<v8::Context> context = v8::Context::New(isolate_, nullptr, global_template);
@@ -286,6 +282,94 @@ void Environment::SetupCallbacks() {
 
 void Environment::SetupNativeFunctions() {
   v8::Context::Scope context_scope(context());
+
+  // ---- Native timers --------------------------------------------
+  // Delegate to EventLoop so uv_timer handles keep the loop alive and
+  // actually fire. Without this the process drains sync code and exits.
+  // V8 FunctionCallbacks must be plain function pointers, so we fetch the
+  // Environment (and its EventLoop) via isolate->GetData(0).
+
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "setTimeout").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        EventLoop* event_loop = env ? env->timer_loop() : nullptr;
+        if (info.Length() < 1 || !info[0]->IsFunction() || !event_loop) {
+          info.GetReturnValue().Set(v8::Integer::New(isolate, 0));
+          return;
+        }
+        int delay = 0;
+        if (info.Length() >= 2 && info[1]->IsNumber()) {
+          delay = info[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0);
+          if (delay < 0) delay = 0;
+        }
+        v8::Local<v8::Value>* args = nullptr;
+        int argc = 0;
+        if (info.Length() > 2) {
+          argc = info.Length() - 2;
+          args = new v8::Local<v8::Value>[argc];
+          for (int i = 0; i < argc; i++) {
+            args[i] = info[i + 2];
+          }
+        }
+        int id = event_loop->SetTimeout(info[0].As<v8::Function>(), delay, args, argc);
+        delete[] args;
+        info.GetReturnValue().Set(v8::Integer::New(isolate, id));
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "setInterval").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        EventLoop* event_loop = env ? env->timer_loop() : nullptr;
+        if (info.Length() < 1 || !info[0]->IsFunction() || !event_loop) {
+          info.GetReturnValue().Set(v8::Integer::New(isolate, 0));
+          return;
+        }
+        int interval = 0;
+        if (info.Length() >= 2 && info[1]->IsNumber()) {
+          interval = info[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0);
+          if (interval < 0) interval = 0;
+        }
+        v8::Local<v8::Value>* args = nullptr;
+        int argc = 0;
+        if (info.Length() > 2) {
+          argc = info.Length() - 2;
+          args = new v8::Local<v8::Value>[argc];
+          for (int i = 0; i < argc; i++) {
+            args[i] = info[i + 2];
+          }
+        }
+        int id = event_loop->SetInterval(info[0].As<v8::Function>(), interval, args, argc);
+        delete[] args;
+        info.GetReturnValue().Set(v8::Integer::New(isolate, id));
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "clearTimeout").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        EventLoop* event_loop = env ? env->timer_loop() : nullptr;
+        if (info.Length() >= 1 && event_loop) {
+          int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+          event_loop->ClearTimeout(id);
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "clearInterval").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        EventLoop* event_loop = env ? env->timer_loop() : nullptr;
+        if (info.Length() >= 1 && event_loop) {
+          int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+          event_loop->ClearInterval(id);
+        }
+      })->GetFunction(context()).ToLocalChecked()).Check();
 
   // __elyxion_fs_writeFileSync(path, data)
   context()->Global()->Set(context(),
@@ -723,8 +807,13 @@ bool Environment::Run() {
   
   running_ = true;
   
-  // Run the event loop
-  int alive = uv_run(loop_, UV_RUN_DEFAULT);
+  // Run the event loop (uv_timer handles from EventLoop keep it alive)
+  int alive;
+  if (event_loop_ != nullptr) {
+    alive = event_loop_->Run();
+  } else {
+    alive = uv_run(loop_, UV_RUN_DEFAULT);
+  }
   
   running_ = false;
   
