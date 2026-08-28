@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.2] - 2026-08-29
+
+- Fix TCP callback error propagation so connection failures reach JavaScript as `Error` objects instead of crashing V8.
+
+
 ## [1.2.1] - 2026-08-29
 
 - Fix cross-platform TCP client compilation and release the outbound TCP support used by Discord gateway clients.
@@ -150,7 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 1. Update the version constants in the native runtime and release metadata
 2. Update `CHANGELOG.md` with new version
-3. Create git tag: `git tag v1.2.0`
+3. Create git tag: `git tag v1.2.2`
 4. Push changes: `git push && git push --tags`
 5. Create GitHub release with changelog
 

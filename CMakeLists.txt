@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.15)
 # =============================================================================
 
 project(elyxion
-    VERSION 1.2.0
+    VERSION 1.2.2
     LANGUAGES CXX C
     DESCRIPTION "Elyxion CLI - JavaScript Runtime"
 )

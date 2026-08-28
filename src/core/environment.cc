@@ -764,7 +764,8 @@ void Environment::SetupNativeFunctions() {
               if (!c->on_error.IsEmpty()) {
                 v8::HandleScope hs(iso);
                 auto ctx = iso->GetCurrentContext();
-                v8::Local<v8::Value> arg = v8::String::NewFromUtf8(iso, uv_strerror(status)).ToLocalChecked();
+                v8::Local<v8::Value> arg = v8::Exception::Error(
+                    v8::String::NewFromUtf8(iso, uv_strerror(status)).ToLocalChecked());
                 c->on_error.Get(iso)->Call(ctx, ctx->Global(), 1, &arg);
               }
               c->closed = true;
@@ -788,7 +789,8 @@ void Environment::SetupNativeFunctions() {
                   } else if (nread != UV_EOF && !c2->on_error.IsEmpty()) {
                     v8::HandleScope hs(c2->isolate);
                     auto ctx = c2->isolate->GetCurrentContext();
-                    v8::Local<v8::Value> arg = v8::String::NewFromUtf8(c2->isolate, uv_strerror(static_cast<int>(nread))).ToLocalChecked();
+                    v8::Local<v8::Value> arg = v8::Exception::Error(
+                        v8::String::NewFromUtf8(c2->isolate, uv_strerror(static_cast<int>(nread))).ToLocalChecked());
                     c2->on_error.Get(c2->isolate)->Call(ctx, ctx->Global(), 1, &arg);
                   }
                   return;
