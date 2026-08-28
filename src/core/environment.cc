@@ -1078,7 +1078,7 @@ void Environment::SetupNativeFunctions() {
   // __elyxion_tls_connect(host, port, { connect, data, end, error }) -> connId
   context()->Global()->Set(context(),
       v8::String::NewFromUtf8(isolate_, "__elyxion_tls_connect").ToLocalChecked(),
-      v8::FunctionTemplate::New(isolate_, [tls_worker](const v8::FunctionCallbackInfo<v8::Value>& info) {
+      v8::FunctionTemplate::New(isolate_, [tls_worker, tls_async_cb](const v8::FunctionCallbackInfo<v8::Value>& info) {
         auto* isolate = info.GetIsolate();
         auto* env = static_cast<Environment*>(isolate->GetData(0));
         if (!env || info.Length() < 3 || !info[0]->IsString()) {

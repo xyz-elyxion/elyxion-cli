@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1] - 2026-08-29
+
+### Fixed
+- The Windows build now compiles cleanly with MSVC: the `__elyxion_tls_connect` V8 callback captures both the TLS worker (`tls_worker`) and async drain (`tls_async_cb`) lambdas explicitly, fixing `C3493` when OpenSSL is enabled.
+
+
 ## [1.3.0] - 2026-08-29
 
 ### Added
@@ -154,6 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **1.3.0** - Real OpenSSL TLS client support for https and WebSocket gateways
 - **1.2.0** - Outbound TCP client support
 - **1.1.0** - Real TCP sockets and working timers
 - **1.0.0** - Initial release with core runtime and package manager
@@ -165,7 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 1. Update the version constants in the native runtime and release metadata
 2. Update `CHANGELOG.md` with new version
-3. Create git tag: `git tag v1.3.0`
+3. Create git tag: `git tag v1.3.1`
 4. Push changes: `git push && git push --tags`
 5. Create GitHub release with changelog
 
