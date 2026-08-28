@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <netdb.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -685,6 +686,138 @@ void Environment::SetupNativeFunctions() {
         int id = env->AllocListenerId();
         env->listeners()[id] = listener;
         info.GetReturnValue().Set(v8::Integer::New(isolate, id));
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_tcp_connect(host, port, onConnect, onData, onEnd, onError)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_tcp_connect").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (!env || info.Length() < 2 || !info[0]->IsString()) {
+          isolate->ThrowException(v8::Exception::TypeError(
+              v8::String::NewFromUtf8(isolate, "tcp.connect(host, port, callbacks) requires a host and port").ToLocalChecked()));
+          return;
+        }
+
+        v8::String::Utf8Value host_value(isolate, info[0]);
+        int port = info[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0);
+        if (port < 1 || port > 65535) {
+          isolate->ThrowException(v8::Exception::RangeError(
+              v8::String::NewFromUtf8(isolate, "tcp.connect port must be between 1 and 65535").ToLocalChecked()));
+          return;
+        }
+
+        auto* conn = new TCPConnection();
+        conn->isolate = isolate;
+        conn->env = env;
+        uv_tcp_init(env->event_loop(), &conn->handle);
+        conn->handle.data = conn;
+
+        if (info.Length() >= 3 && info[2]->IsObject()) {
+          auto callbacks = info[2].As<v8::Object>();
+          auto ctx = isolate->GetCurrentContext();
+          auto get_callback = [&](const char* name, v8::Global<v8::Function>& target) {
+            v8::Local<v8::Value> value;
+            if (callbacks->Get(ctx, v8::String::NewFromUtf8(isolate, name).ToLocalChecked()).ToLocal(&value) && value->IsFunction()) {
+              target.Reset(isolate, value.As<v8::Function>());
+            }
+          };
+          get_callback("connect", conn->on_connect);
+          get_callback("data", conn->on_data);
+          get_callback("end", conn->on_end);
+          get_callback("error", conn->on_error);
+        }
+
+        int conn_id = env->AllocConnectionId();
+        env->connections()[conn_id] = conn;
+
+        auto* req = new uv_connect_t();
+        req->data = conn;
+        struct sockaddr_in addr;
+        if (uv_ip4_addr(*host_value, port, &addr) != 0) {
+          struct addrinfo hints{};
+          hints.ai_family = AF_INET;
+          hints.ai_socktype = SOCK_STREAM;
+          struct addrinfo* result = nullptr;
+          int gai = getaddrinfo(*host_value, nullptr, &hints, &result);
+          if (gai != 0 || !result) {
+            env->connections().erase(conn_id);
+            delete req;
+            uv_close((uv_handle_t*)&conn->handle, [](uv_handle_t* h) { delete static_cast<TCPConnection*>(h->data); });
+            isolate->ThrowException(v8::Exception::Error(
+                v8::String::NewFromUtf8(isolate, "could not resolve TCP host").ToLocalChecked()));
+            return;
+          }
+          memcpy(&addr, result->ai_addr, sizeof(addr));
+          addr.sin_port = htons(static_cast<uint16_t>(port));
+          freeaddrinfo(result);
+        }
+
+        int r = uv_tcp_connect(req, &conn->handle, (const struct sockaddr*)&addr,
+          [](uv_connect_t* request, int status) {
+            auto* c = static_cast<TCPConnection*>(request->data);
+            auto* env2 = c->env;
+            auto* iso = c->isolate;
+            delete request;
+            if (status < 0) {
+              if (!c->on_error.IsEmpty()) {
+                v8::HandleScope hs(iso);
+                auto ctx = iso->GetCurrentContext();
+                v8::Local<v8::Value> arg = v8::String::NewFromUtf8(iso, uv_strerror(status)).ToLocalChecked();
+                c->on_error.Get(iso)->Call(ctx, ctx->Global(), 1, &arg);
+              }
+              c->closed = true;
+              uv_close((uv_handle_t*)&c->handle, [](uv_handle_t* h) { delete static_cast<TCPConnection*>(h->data); });
+              return;
+            }
+
+            uv_read_start((uv_stream_t*)&c->handle,
+              [](uv_handle_t*, size_t suggested, uv_buf_t* buf) {
+                buf->base = new char[suggested];
+                buf->len = suggested;
+              },
+              [](uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
+                auto* c2 = static_cast<TCPConnection*>(stream->data);
+                if (nread < 0) {
+                  delete[] buf->base;
+                  if (nread == UV_EOF && !c2->on_end.IsEmpty()) {
+                    v8::HandleScope hs(c2->isolate);
+                    auto ctx = c2->isolate->GetCurrentContext();
+                    c2->on_end.Get(c2->isolate)->Call(ctx, ctx->Global(), 0, nullptr);
+                  } else if (nread != UV_EOF && !c2->on_error.IsEmpty()) {
+                    v8::HandleScope hs(c2->isolate);
+                    auto ctx = c2->isolate->GetCurrentContext();
+                    v8::Local<v8::Value> arg = v8::String::NewFromUtf8(c2->isolate, uv_strerror(static_cast<int>(nread))).ToLocalChecked();
+                    c2->on_error.Get(c2->isolate)->Call(ctx, ctx->Global(), 1, &arg);
+                  }
+                  return;
+                }
+                if (!c2->on_data.IsEmpty()) {
+                  v8::HandleScope hs(c2->isolate);
+                  auto ctx = c2->isolate->GetCurrentContext();
+                  v8::Local<v8::Value> arg = v8::String::NewFromUtf8(c2->isolate, std::string(buf->base, nread).c_str()).ToLocalChecked();
+                  c2->on_data.Get(c2->isolate)->Call(ctx, ctx->Global(), 1, &arg);
+                }
+                delete[] buf->base;
+              });
+
+            if (!c->on_connect.IsEmpty()) {
+              v8::HandleScope hs(iso);
+              auto ctx = iso->GetCurrentContext();
+              c->on_connect.Get(iso)->Call(ctx, ctx->Global(), 0, nullptr);
+            }
+            (void)env2;
+          });
+        if (r != 0) {
+          env->connections().erase(conn_id);
+          delete req;
+          uv_close((uv_handle_t*)&conn->handle, [](uv_handle_t* h) { delete static_cast<TCPConnection*>(h->data); });
+          isolate->ThrowException(v8::Exception::Error(
+              v8::String::NewFromUtf8(isolate, "could not start TCP connection").ToLocalChecked()));
+          return;
+        }
+        info.GetReturnValue().Set(v8::Integer::New(isolate, conn_id));
       })->GetFunction(context()).ToLocalChecked()).Check();
 
   // __elyxion_tcp_close_listener(listenerId)

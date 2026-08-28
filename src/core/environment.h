@@ -21,12 +21,13 @@ struct TCPListener {
   Environment* env;
 };
 
-// Holds a libuv TCP connection (accepted socket) and its JS callbacks.
+// Holds a libuv TCP connection (accepted or outbound) and its JS callbacks.
 struct TCPConnection {
   uv_tcp_t handle;
   v8::Global<v8::Function> on_data;
   v8::Global<v8::Function> on_end;
   v8::Global<v8::Function> on_error;
+  v8::Global<v8::Function> on_connect;
   v8::Isolate* isolate;
   Environment* env;
   bool closed = false;
