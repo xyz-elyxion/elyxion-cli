@@ -27,10 +27,10 @@ elyx install <package>
 To pin a specific version:
 
 ```bash
-ELYXION_VERSION=v1.2.2 curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash
+ELYXION_VERSION=v1.3.0 curl -fsSL https://raw.githubusercontent.com/xyz-elyxion/elyxion-cli/main/scripts/install.sh | bash
 ```
 
-The installer defaults to a pinned, known-good release (`v1.2.2`) instead of `latest`, so a stale or broken tagged binary is never silently installed.
+The installer defaults to a pinned, known-good release (`v1.3.0`) instead of `latest`, so a stale or broken tagged binary is never silently installed.
 
 ## Manual Download
 
@@ -166,7 +166,7 @@ The server is self-contained — deploy `site/` anywhere that can run the Elyxio
 
 ## Built-in Modules
 
-The runtime includes JavaScript implementations for `events`, `stream`, `buffer`, `path`, `fs`, `http`, `net`, `tcp`, `crypto`, `os`, `url`, `util`, `child_process`, and related compatibility modules. `tcp.createConnection()` supports outbound TCP clients for runtimes such as Discord gateway clients.
+The runtime includes JavaScript implementations for `events`, `stream`, `buffer`, `path`, `fs`, `http`, `net`, `tcp`, `tls`, `crypto`, `os`, `url`, `util`, `child_process`, and related compatibility modules. `tcp.createConnection()` supports outbound TCP clients for runtimes such as Discord gateway clients, and `tls.connect()` provides real OpenSSL-backed TLS (when built with OpenSSL) for secure WebSocket/gateway connections.
 
 ## Project Files
 

@@ -4,6 +4,9 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <deque>
+#include <thread>
+#include <mutex>
 #include <unordered_map>
 #include <uv.h>
 #include <v8.h>
@@ -12,6 +15,13 @@ namespace elyxion {
 
 class Environment;
 class EventLoop;
+
+// Represents an event queued by the TLS worker thread. V8 handles are only
+// ever touched on the main (libuv) thread; the worker pushes plain structs.
+struct TLSMessage {
+  std::string type;   // "connect" | "data" | "end" | "error"
+  std::string data;
+};
 
 // Holds a libuv TCP listening socket and its JS on-connection callback.
 struct TCPListener {
@@ -32,6 +42,29 @@ struct TCPConnection {
   Environment* env;
   bool closed = false;
   char read_buf[65536];
+};
+
+// A single TLS client connection. The SSL handshake, encryption and decryption
+// happen on a detached worker thread using OpenSSL; the libuv async handle
+// marshals plaintext messages back to the main thread where V8 callbacks run.
+struct TLSClient {
+  int id = -1;
+  uv_async_t async;
+  v8::Isolate* isolate = nullptr;
+  Environment* env = nullptr;
+
+  // V8 callbacks (touched only on the main thread).
+  v8::Global<v8::Function> on_connect;
+  v8::Global<v8::Function> on_data;
+  v8::Global<v8::Function> on_end;
+  v8::Global<v8::Function> on_error;
+
+  // Shared with the worker: outbound plaintext writes and delivered events.
+  std::mutex mutex;
+  std::deque<std::string> outbox;   // main thread -> worker (plaintext)
+  std::deque<TLSMessage> inbox;     // worker -> main thread
+  bool closing = false;             // main thread asked worker to stop
+  bool worker_done = false;         // worker finished the loop
 };
 
 class Environment {
@@ -69,8 +102,10 @@ class Environment {
   // TCP helpers exposed to SetupNativeFunctions (defined below)
   int AllocListenerId() { return next_listener_id_++; }
   int AllocConnectionId() { return next_conn_id_++; }
+  int AllocTlsId() { return next_tls_id_++; }
   std::unordered_map<int, TCPListener*>& listeners() { return tcp_listeners_; }
   std::unordered_map<int, TCPConnection*>& connections() { return tcp_connections_; }
+  std::unordered_map<int, TLSClient*>& tls_clients() { return tls_clients_; }
 
  private:
   void SetupProcessObject();
@@ -95,8 +130,10 @@ class Environment {
 
   int next_listener_id_ = 1;
   int next_conn_id_ = 1;
+  int next_tls_id_ = 1;
   std::unordered_map<int, TCPListener*> tcp_listeners_;
   std::unordered_map<int, TCPConnection*> tcp_connections_;
+  std::unordered_map<int, TLSClient*> tls_clients_;
 };
 
 }  // namespace elyxion

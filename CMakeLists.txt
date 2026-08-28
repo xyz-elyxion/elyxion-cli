@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.15)
 # =============================================================================
 
 project(elyxion
-    VERSION 1.2.2
+    VERSION 1.3.0
     LANGUAGES CXX C
     DESCRIPTION "Elyxion CLI - JavaScript Runtime"
 )
@@ -24,6 +24,24 @@ set(LIBUV_DIR "" CACHE PATH "Optional libuv installation prefix")
 # ---- Find standalone V8 headers and library ----
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(V8 REQUIRED)
+
+# ---- Optional OpenSSL for TLS client support ----
+find_package(OpenSSL QUIET COMPONENTS SSL Crypto)
+if(OPENSSL_FOUND)
+    message(STATUS "OpenSSL found: ${OPENSSL_VERSION}")
+    set(ELYXION_HAS_OPENSSL ON)
+else()
+    message(WARNING "OpenSSL not found — TLS client (require('tls')) will be unavailable")
+    set(ELYXION_HAS_OPENSSL OFF)
+endif()
+
+if(ELYXION_HAS_OPENSSL AND WIN32 AND MSVC)
+    # Ensure OpenSSL and V8 use the same static CRT (/MT).
+    if(OPENSSL_USE_STATIC_LIBS)
+        set_property(TARGET elyxion PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+endif()
 
 # ---- Find or build libuv ----
 # The distributed Windows V8 SDK is built with /MT. Set the default before
@@ -101,6 +119,11 @@ target_link_libraries(elyxion PRIVATE
     elyxion_libuv
     ${V8_LIBRARY}
 )
+
+if(ELYXION_HAS_OPENSSL)
+    target_compile_definitions(elyxion PRIVATE ELYXION_HAS_OPENSSL=1)
+    target_link_libraries(elyxion PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
 
 if(V8_PLATFORM_LIBRARY)
     target_link_libraries(elyxion PRIVATE ${V8_PLATFORM_LIBRARY})

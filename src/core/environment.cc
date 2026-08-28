@@ -7,6 +7,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <cerrno>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <deque>
+#include <set>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -18,8 +24,14 @@
 #include <arpa/inet.h>
 #include <poll.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
 #include <unistd.h>
 extern char** environ;
+#endif
+
+#ifdef ELYXION_HAS_OPENSSL
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #endif
 
 namespace elyxion {
@@ -926,6 +938,228 @@ void Environment::SetupNativeFunctions() {
           });
         });
       })->GetFunction(context()).ToLocalChecked()).Check();
+
+#ifdef ELYXION_HAS_OPENSSL
+  // ---- Native TLS client networking -----------------------------
+  // Real TLS needs a bidirectional stream, so instead of cascading onto the
+  // libuv TCP path we run OpenSSL on a dedicated worker thread per
+  // connection. Plaintext writes from JS are queued to that thread and
+  // decrypted bytes are marshalled back to the main thread via uv_async.
+
+  // Worker thread: resolves, connects, performs the TLS handshake, then
+  // loops flushing outbound writes and reading ciphertext -> plaintext.
+  auto tls_worker = [](TLSClient* c, std::string host, int port) {
+#ifdef _WIN32
+    WSADATA wsadata;
+    WSAStartup(MAKEWORD(2, 2), &wsadata);
+#endif
+    auto push = [c](const std::string& type, const std::string& data) {
+      { std::lock_guard<std::mutex> lk(c->mutex);
+        c->inbox.push_back(TLSMessage{type, data}); }
+      uv_async_send(&c->async);
+    };
+
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    SSL* ssl = ctx ? SSL_new(ctx) : nullptr;
+#ifdef _WIN32
+    SOCKET fd = INVALID_SOCKET;
+#else
+    int fd = -1;
+#endif
+
+    if (!ssl) { push("error", "TLS init failed"); }
+    else {
+      struct addrinfo hints{};
+      hints.ai_family = AF_UNSPEC;
+      hints.ai_socktype = SOCK_STREAM;
+      struct addrinfo* res = nullptr;
+      if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) {
+        push("error", "could not resolve TLS host");
+      } else {
+#ifdef _WIN32
+        fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+#else
+        fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+#endif
+        if (fd < 0) { push("error", "could not create TLS socket"); }
+        else {
+          if (connect(fd, res->ai_addr, (int)res->ai_addrlen) != 0) {
+            push("error", "TLS connect failed");
+          } else {
+            SSL_set_fd(ssl, (int)fd);
+            SSL_set_tlsext_host_name(ssl, host.c_str());
+            if (SSL_connect(ssl) != 1) {
+              push("error", "TLS handshake failed");
+            } else {
+              push("connect", "");
+              // Read/flush loop.
+              std::vector<char> wbuffer;
+              char plain[65536];
+              bool running = true;
+              while (running) {
+                std::vector<std::string> writes;
+                { std::lock_guard<std::mutex> lk(c->mutex);
+                  while (!c->outbox.empty()){ writes.push_back(std::move(c->outbox.front())); c->outbox.pop_front(); } }
+                for (auto& w : writes) {
+                  if (SSL_write(ssl, w.data(), (int)w.size()) <= 0) { push("end", ""); running = false; break; }
+                }
+                if (!running) break;
+                fd_set rfds; FD_ZERO(&rfds); FD_SET(fd, &rfds);
+                struct timeval tv{0, 50000}; // 50 ms
+                int r = select((int)fd + 1, &rfds, nullptr, nullptr, &tv);
+                if (r < 0) break;
+                if (r > 0 && FD_ISSET(fd, &rfds)) {
+                  int n = SSL_read(ssl, plain, sizeof(plain));
+                  if (n > 0) push("data", std::string(plain, n));
+                  else if (n == 0) { push("end", ""); running = false; }
+                  else { push("error", "TLS read failed"); running = false; }
+                }
+                { std::lock_guard<std::mutex> lk(c->mutex); if (c->closing) running = false; }
+              }
+              SSL_shutdown(ssl);
+            }
+          }
+        }
+      }
+      if (res) freeaddrinfo(res);
+      SSL_free(ssl);
+    }
+    if (ctx) SSL_CTX_free(ctx);
+#ifdef _WIN32
+    if (fd != INVALID_SOCKET) closesocket(fd);
+#else
+    if (fd >= 0) { shutdown(fd, SHUT_RDWR); ::close(fd); }
+#endif
+    { std::lock_guard<std::mutex> lk(c->mutex); c->worker_done = true; }
+    uv_async_send(&c->async);
+  };
+
+  // Runs on the libuv main thread; drains the worker inbox into V8.
+  auto tls_async_cb = [](uv_async_t* handle) {
+    auto* c = static_cast<TLSClient*>(handle->data);
+    v8::Isolate* iso = c->isolate;
+    v8::HandleScope hs(iso);
+    auto ctx = iso->GetCurrentContext();
+    std::vector<TLSMessage> msgs;
+    { std::lock_guard<std::mutex> lk(c->mutex);
+      while (!c->inbox.empty()){ msgs.push_back(std::move(c->inbox.front())); c->inbox.pop_front(); } }
+    for (auto& m : msgs) {
+      if (m.type == "connect" && !c->on_connect.IsEmpty()) {
+        c->on_connect.Get(iso)->Call(ctx, ctx->Global(), 0, nullptr);
+      } else if (m.type == "data" && !c->on_data.IsEmpty()) {
+        v8::Local<v8::Value> arg = v8::String::NewFromUtf8(iso, m.data.c_str()).ToLocalChecked();
+        c->on_data.Get(iso)->Call(ctx, ctx->Global(), 1, &arg);
+      } else if (m.type == "end" && !c->on_end.IsEmpty()) {
+        c->on_end.Get(iso)->Call(ctx, ctx->Global(), 0, nullptr);
+      } else if (m.type == "error" && !c->on_error.IsEmpty()) {
+        v8::Local<v8::Value> arg = v8::Exception::Error(
+            v8::String::NewFromUtf8(iso, m.data.c_str()).ToLocalChecked());
+        c->on_error.Get(iso)->Call(ctx, ctx->Global(), 1, &arg);
+      }
+    }
+
+    // When the worker has fully exited and its queue is drained, release.
+    bool done = false;
+    { std::lock_guard<std::mutex> lk(c->mutex); done = c->worker_done && c->inbox.empty(); }
+    if (done && c->env) {
+      c->env->tls_clients().erase(c->id);
+      c->on_connect.Reset();
+      c->on_data.Reset();
+      c->on_end.Reset();
+      c->on_error.Reset();
+      uv_close((uv_handle_t*)&c->async, [](uv_handle_t* h) {
+        TLSClient* cc = static_cast<TLSClient*>(h->data);
+        cc->env = nullptr;
+        delete cc;
+      });
+    }
+  };
+
+  // __elyxion_tls_connect(host, port, { connect, data, end, error }) -> connId
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_tls_connect").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [tls_worker](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (!env || info.Length() < 3 || !info[0]->IsString()) {
+          isolate->ThrowException(v8::Exception::TypeError(
+              v8::String::NewFromUtf8(isolate, "tls.connect(host, port, callbacks) requires a host, port and callbacks").ToLocalChecked()));
+          return;
+        }
+        v8::String::Utf8Value hv(isolate, info[0]);
+        std::string host(*hv);
+        int port = info[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0);
+        if (port < 1 || port > 65535) {
+          isolate->ThrowException(v8::Exception::RangeError(
+              v8::String::NewFromUtf8(isolate, "tls.connect port must be between 1 and 65535").ToLocalChecked()));
+          return;
+        }
+
+        auto* c = new TLSClient();
+        c->isolate = isolate;
+        c->env = env;
+        if (info[2]->IsObject()) {
+          auto callbacks = info[2].As<v8::Object>();
+          auto ctx = isolate->GetCurrentContext();
+          auto get_cb = [&](const char* name, v8::Global<v8::Function>& target) {
+            v8::Local<v8::Value> v;
+            if (callbacks->Get(ctx, v8::String::NewFromUtf8(isolate, name).ToLocalChecked()).ToLocal(&v) && v->IsFunction()) {
+              target.Reset(isolate, v.As<v8::Function>());
+            }
+          };
+          get_cb("connect", c->on_connect);
+          get_cb("data", c->on_data);
+          get_cb("end", c->on_end);
+          get_cb("error", c->on_error);
+        }
+
+        int id = env->AllocTlsId();
+        c->id = id;
+        env->tls_clients()[id] = c;
+
+        uv_async_init(env->event_loop(), &c->async, tls_async_cb);
+        c->async.data = c;
+
+        std::thread(tls_worker, c, host, port).detach();
+        info.GetReturnValue().Set(v8::Integer::New(isolate, id));
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_tls_write(connId, data) -> bool
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_tls_write").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (info.Length() < 2) return;
+        int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+        auto it = env->tls_clients().find(id);
+        if (it == env->tls_clients().end() || it->second->worker_done) {
+          info.GetReturnValue().Set(v8::Boolean::New(isolate, false));
+          return;
+        }
+        v8::String::Utf8Value data(isolate, info[1]);
+        { std::lock_guard<std::mutex> lk(it->second->mutex);
+          it->second->outbox.push_back(std::string(*data, data.length())); }
+        uv_async_send(&it->second->async);
+        info.GetReturnValue().Set(v8::Boolean::New(isolate, true));
+      })->GetFunction(context()).ToLocalChecked()).Check();
+
+  // __elyxion_tls_close(connId)
+  context()->Global()->Set(context(),
+      v8::String::NewFromUtf8(isolate_, "__elyxion_tls_close").ToLocalChecked(),
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
+        auto* isolate = info.GetIsolate();
+        auto* env = static_cast<Environment*>(isolate->GetData(0));
+        if (info.Length() < 1) return;
+        int id = info[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1);
+        auto it = env->tls_clients().find(id);
+        if (it == env->tls_clients().end()) return;
+        { std::lock_guard<std::mutex> lk(it->second->mutex); it->second->closing = true; }
+        uv_async_send(&it->second->async);
+        // V8 handles are reset here; the TLSClient is freed when the
+        // worker finishes (checked on the next async callback).
+      })->GetFunction(context()).ToLocalChecked()).Check();
+#endif
 }
 
 bool Environment::Bootstrap() {
@@ -1048,7 +1282,7 @@ void Environment::SetupRequire() {
   RegisterBuiltin("querystring", "modules/url.js");
   RegisterBuiltin("assert", "modules/assert.js");
   RegisterBuiltin("dns", "modules/net.js");
-  RegisterBuiltin("tls", "modules/net.js");
+  RegisterBuiltin("tls", "modules/tls.js");
   RegisterBuiltin("readline", "modules/readline.js");
   RegisterBuiltin("tcp", "modules/tcp.js");
 

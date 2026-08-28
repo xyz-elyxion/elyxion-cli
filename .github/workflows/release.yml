@@ -38,11 +38,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ make curl xz-utils tar
+          sudo apt-get install -y cmake g++ make curl xz-utils tar libssl-dev
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
-        run: brew install cmake xz || true
+        run: brew install cmake xz openssl@3 || true
+
+      - name: Locate openssl for macOS
+        if: runner.os == 'macOS'
+        run: |
+          echo "OPENSSL_ROOT_DIR=/usr/local/opt/openssl@3" >> $GITHUB_ENV
 
       - name: Download V8 SDK on Unix
         if: runner.os != 'Windows'
@@ -70,7 +75,7 @@ jobs:
 
       - name: Configure Unix
         if: runner.os != 'Windows'
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DV8_DIR="$RUNNER_TEMP/v8"
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DV8_DIR="$RUNNER_TEMP/v8" -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT_DIR}"
 
       - name: Configure Windows
         if: runner.os == 'Windows'

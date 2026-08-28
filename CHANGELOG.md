@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.0] - 2026-08-29
+
+### Added
+- Real TLS client support via OpenSSL: `require('tls').connect()` / `createConnection()` perform a full TLS handshake, so WebSocket gateway clients (e.g. Discord) no longer send plaintext to HTTPS ports.
+- `https` requests in `lib/modules/http.js` now use TLS automatically.
+
+### Fixed
+- The runtime previously aliased `tls` to raw `net`, so outbound TLS connections failed. TLS is now compiled in when CMake finds OpenSSL (`libssl-dev` on Linux, `openssl@3` on macOS); builds without OpenSSL fall back to the old behavior.
+
+
 ## [1.2.2] - 2026-08-29
 
 - Fix TCP callback error propagation so connection failures reach JavaScript as `Error` objects instead of crashing V8.
@@ -155,7 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 1. Update the version constants in the native runtime and release metadata
 2. Update `CHANGELOG.md` with new version
-3. Create git tag: `git tag v1.2.2`
+3. Create git tag: `git tag v1.3.0`
 4. Push changes: `git push && git push --tags`
 5. Create GitHub release with changelog
 
