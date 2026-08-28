@@ -6,7 +6,7 @@
 # Or save the script and run:
 #   .\install.ps1
 #
-# Set $env:ELYXION_VERSION to pin a specific release (e.g. v1.3.1).
+# Set $env:ELYXION_VERSION to pin a specific release (e.g. v1.3.2).
 # Set $env:ELYXION_INSTALL_DIR to change the install directory.
 #
 # NOTE: the default version is pinned to a known-good release rather than
@@ -20,7 +20,7 @@ $host.UI.RawUI.WindowTitle = "Elyxion Installer"
 
 # ---- Configuration ------------------------------------------------
 $Repo    = if ($env:ELYXION_REPO)    { $env:ELYXION_REPO }    else { "xyz-elyxion/elyxion-cli" }
-$Version = if ($env:ELYXION_VERSION) { $env:ELYXION_VERSION } else { "v1.3.1" }
+$Version = if ($env:ELYXION_VERSION) { $env:ELYXION_VERSION } else { "v1.3.2" }
 $InstallDir = if ($env:ELYXION_INSTALL_DIR) { $env:ELYXION_INSTALL_DIR } else { "$env:LOCALAPPDATA\Elyxion" }
 
 # ---- Logging -------------------------------------------------------

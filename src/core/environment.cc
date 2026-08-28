@@ -36,6 +36,16 @@ extern char** environ;
 
 namespace elyxion {
 
+#ifdef ELYXION_HAS_OPENSSL
+// The TLS worker entry points are stored here as plain function pointers so
+// V8 callbacks (which must be non-capturing function pointers) can reach the
+// per-connection worker loop and the libuv async drain without capturing any
+// local lambda. They are assigned once in SetupNativeFunctions on the main
+// thread, before any __elyxion_tls_* call is invoked from JavaScript.
+static void (*g_tls_work_loop)(TLSClient*, std::string, int) = nullptr;
+static void (*g_tls_drain)(uv_async_t*) = nullptr;
+#endif
+
 Environment::Environment(v8::Isolate* isolate, uv_loop_t* loop, const std::string& resource_root,
                          EventLoop* event_loop)
     : isolate_(isolate),
@@ -1034,6 +1044,10 @@ void Environment::SetupNativeFunctions() {
     uv_async_send(&c->async);
   };
 
+  // Expose the (non-capturing) worker loop as a plain function pointer so the
+  // __elyxion_tls_connect V8 callback can start it without capturing a lambda.
+  g_tls_work_loop = tls_worker;
+
   // Runs on the libuv main thread; drains the worker inbox into V8.
   auto tls_async_cb = [](uv_async_t* handle) {
     auto* c = static_cast<TLSClient*>(handle->data);
@@ -1075,10 +1089,14 @@ void Environment::SetupNativeFunctions() {
     }
   };
 
+  // Expose the (non-capturing) async drain as a plain function pointer so the
+  // __elyxion_tls_connect V8 callback can register it with uv_async_init.
+  g_tls_drain = tls_async_cb;
+
   // __elyxion_tls_connect(host, port, { connect, data, end, error }) -> connId
   context()->Global()->Set(context(),
       v8::String::NewFromUtf8(isolate_, "__elyxion_tls_connect").ToLocalChecked(),
-      v8::FunctionTemplate::New(isolate_, [tls_worker, tls_async_cb](const v8::FunctionCallbackInfo<v8::Value>& info) {
+      v8::FunctionTemplate::New(isolate_, [](const v8::FunctionCallbackInfo<v8::Value>& info) {
         auto* isolate = info.GetIsolate();
         auto* env = static_cast<Environment*>(isolate->GetData(0));
         if (!env || info.Length() < 3 || !info[0]->IsString()) {
@@ -1117,10 +1135,17 @@ void Environment::SetupNativeFunctions() {
         c->id = id;
         env->tls_clients()[id] = c;
 
-        uv_async_init(env->event_loop(), &c->async, tls_async_cb);
+        uv_async_init(env->event_loop(), &c->async, g_tls_drain);
         c->async.data = c;
 
-        std::thread(tls_worker, c, host, port).detach();
+        if (!g_tls_work_loop || !g_tls_drain) {
+          env->tls_clients().erase(id);
+          delete c;
+          isolate->ThrowException(v8::Exception::Error(
+              v8::String::NewFromUtf8(isolate, "TLS worker is unavailable (built without OpenSSL?)").ToLocalChecked()));
+          return;
+        }
+        std::thread(g_tls_work_loop, c, host, port).detach();
         info.GetReturnValue().Set(v8::Integer::New(isolate, id));
       })->GetFunction(context()).ToLocalChecked()).Check();
 

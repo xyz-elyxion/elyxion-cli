@@ -1,9 +1,15 @@
 # Changelog
 
+## [1.3.2] - 2026-08-29
+
+### Fixed
+- The TLS client now compiles on MSVC. `v8::FunctionCallback` must be a plain function pointer, so the `__elyxion_tls_connect` callback no longer captures the worker lambdas; the (non-capturing) worker loop and async drain are now stored as file-scope function pointers instead of being captured by a local lambda.
+
+
 ## [1.3.1] - 2026-08-29
 
 ### Fixed
-- The Windows build now compiles cleanly with MSVC: the `__elyxion_tls_connect` V8 callback captures both the TLS worker (`tls_worker`) and async drain (`tls_async_cb`) lambdas explicitly, fixing `C3493` when OpenSSL is enabled.
+- The Windows build no longer fails with `C3493`: the `__elyxion_tls_connect` V8 callback switched from an explicit lambda capture list to plain function pointers so MSVC can convert it to a `v8::FunctionCallback`.
 
 
 ## [1.3.0] - 2026-08-29
@@ -172,7 +178,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 1. Update the version constants in the native runtime and release metadata
 2. Update `CHANGELOG.md` with new version
-3. Create git tag: `git tag v1.3.1`
+3. Create git tag: `git tag v1.3.2`
 4. Push changes: `git push && git push --tags`
 5. Create GitHub release with changelog
 
