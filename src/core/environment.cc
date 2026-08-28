@@ -7,13 +7,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <netdb.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <cstdio>
 #else
+#include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <poll.h>
