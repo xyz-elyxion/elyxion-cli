@@ -13,7 +13,7 @@
 #   3. Extracts it to ~/.elyxion/
 #   4. Makes 'elyxion' and 'elyx' available on your PATH
 #
-# Set ELYXION_VERSION to pin a specific release (e.g. v1.3.2).
+# Set ELYXION_VERSION to pin a specific release (e.g. v1.3.3).
 # Set ELYXION_INSTALL_DIR to change the install directory.
 #
 # A full log is saved to ~/.elyxion/install.log
@@ -26,7 +26,7 @@ set -euo pipefail
 
 # ---- Configuration ------------------------------------------------
 ELYXION_REPO="${ELYXION_REPO:-xyz-elyxion/elyxion-cli}"
-ELYXION_VERSION="${ELYXION_VERSION:-v1.3.2}"
+ELYXION_VERSION="${ELYXION_VERSION:-v1.3.3}"
 ELYXION_INSTALL_DIR="${ELYXION_INSTALL_DIR:-$HOME/.elyxion}"
 ELYXION_BIN_DIR="${ELYXION_BIN_DIR:-}"
 ELYXION_LOG="${ELYXION_LOG:-$ELYXION_INSTALL_DIR/install.log}"
@@ -126,7 +126,7 @@ if command -v curl >/dev/null 2>&1; then
     # Try without progress bar for older curl
     if ! curl -fL -o "$TMPDIR/elyxion.tar.gz" "$DOWNLOAD_URL" 2>&1; then
       err "Download failed. Check your internet connection or try a specific version:"
-      err "  ELYXION_VERSION=v1.3.2 ./install.sh"
+      err "  ELYXION_VERSION=v1.3.3 ./install.sh"
       echo ""; echo "Log saved to: $ELYXION_LOG"
       rm -rf "$TMPDIR"
       exit 1
@@ -151,7 +151,7 @@ DOWNLOAD_SIZE="$(wc -c < "$TMPDIR/elyxion.tar.gz")"
 info "Downloaded: ${DOWNLOAD_SIZE} bytes"
 if [ "$DOWNLOAD_SIZE" -lt 1024 ]; then
   err "Downloaded file is too small (${DOWNLOAD_SIZE} bytes) — it may be a GitHub error page."
-  err "Try pinning a known-good version: ELYXION_VERSION=v1.3.2 ./install.sh"
+  err "Try pinning a known-good version: ELYXION_VERSION=v1.3.3 ./install.sh"
   echo ""; echo "Log saved to: $ELYXION_LOG"
   rm -rf "$TMPDIR"
   exit 1

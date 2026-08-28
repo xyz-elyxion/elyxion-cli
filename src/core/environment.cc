@@ -680,9 +680,8 @@ void Environment::SetupNativeFunctions() {
               v8::Isolate* iso2 = c->isolate;
               if (!c->on_data.IsEmpty()) {
                 v8::HandleScope hs(iso2);
-                auto ctx = iso2->GetCurrentContext();
-                v8::Local<v8::Value> arg = v8::String::NewFromUtf8(iso2,
-                    std::string(buf->base, nread).c_str()).ToLocalChecked();
+                auto ctx = iso2->GetCurrentContext();                v8::Local<v8::Value> arg = v8::String::NewFromOneByte(iso2, (const uint8_t*)buf->base,
+                    v8::NewStringType::kNormal, (int)nread).ToLocalChecked();
                 v8::Local<v8::Function> cb = c->on_data.Get(iso2);
                 cb->Call(ctx, ctx->Global(), 1, &arg);
               }
@@ -820,7 +819,8 @@ void Environment::SetupNativeFunctions() {
                 if (!c2->on_data.IsEmpty()) {
                   v8::HandleScope hs(c2->isolate);
                   auto ctx = c2->isolate->GetCurrentContext();
-                  v8::Local<v8::Value> arg = v8::String::NewFromUtf8(c2->isolate, std::string(buf->base, nread).c_str()).ToLocalChecked();
+                  v8::Local<v8::Value> arg = v8::String::NewFromOneByte(c2->isolate, (const uint8_t*)buf->base,
+                      v8::NewStringType::kNormal, (int)nread).ToLocalChecked();
                   c2->on_data.Get(c2->isolate)->Call(ctx, ctx->Global(), 1, &arg);
                 }
                 delete[] buf->base;
@@ -903,11 +903,14 @@ void Environment::SetupNativeFunctions() {
           info.GetReturnValue().Set(v8::Boolean::New(isolate, false));
           return;
         }
-        v8::String::Utf8Value data(isolate, info[1]);
+        v8::String::Value sval(isolate, info[1]);
+        const uint16_t* chars = *sval;
+        std::string bytes;
+        for (int i = 0; i < sval.length(); ++i) bytes.push_back((char)(chars[i] & 0xff));
         auto* buf = new uv_buf_t();
-        buf->base = new char[data.length()];
-        buf->len = data.length();
-        memcpy(buf->base, *data, data.length());
+        buf->base = new char[bytes.size()];
+        buf->len = bytes.size();
+        memcpy(buf->base, bytes.data(), bytes.size());
         auto* req = new uv_write_t();
         req->data = buf;
         uv_write(req, (uv_stream_t*)&it->second->handle, buf, 1, [](uv_write_t* wreq, int) {
@@ -1061,7 +1064,8 @@ void Environment::SetupNativeFunctions() {
       if (m.type == "connect" && !c->on_connect.IsEmpty()) {
         c->on_connect.Get(iso)->Call(ctx, ctx->Global(), 0, nullptr);
       } else if (m.type == "data" && !c->on_data.IsEmpty()) {
-        v8::Local<v8::Value> arg = v8::String::NewFromUtf8(iso, m.data.c_str()).ToLocalChecked();
+        v8::Local<v8::Value> arg = v8::String::NewFromOneByte(iso, (const uint8_t*)m.data.data(),
+            v8::NewStringType::kNormal, (int)m.data.size()).ToLocalChecked();
         c->on_data.Get(iso)->Call(ctx, ctx->Global(), 1, &arg);
       } else if (m.type == "end" && !c->on_end.IsEmpty()) {
         c->on_end.Get(iso)->Call(ctx, ctx->Global(), 0, nullptr);
@@ -1162,9 +1166,12 @@ void Environment::SetupNativeFunctions() {
           info.GetReturnValue().Set(v8::Boolean::New(isolate, false));
           return;
         }
-        v8::String::Utf8Value data(isolate, info[1]);
+        v8::String::Value sval(isolate, info[1]);
+        const uint16_t* chars = *sval;
+        std::string bytes;
+        for (int i = 0; i < sval.length(); ++i) bytes.push_back((char)(chars[i] & 0xff));
         { std::lock_guard<std::mutex> lk(it->second->mutex);
-          it->second->outbox.push_back(std::string(*data, data.length())); }
+          it->second->outbox.push_back(std::move(bytes)); }
         uv_async_send(&it->second->async);
         info.GetReturnValue().Set(v8::Boolean::New(isolate, true));
       })->GetFunction(context()).ToLocalChecked()).Check();

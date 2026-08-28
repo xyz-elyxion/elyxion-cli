@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3] - 2026-08-29
+
+### Fixed
+- Native TLS/`net` reads now deliver byte-preserving latin1 strings instead of UTF-8-decoded text, so binary WebSocket frames (including bytes `0x80`–`0xff`) reach JavaScript intact; matching write paths now consume latin1 bytes instead of re-encoding as UTF-8.
+- `Buffer` is now Node-compatible enough for the binary protocol path: numeric index access (`buf[i]`), `readUInt16BE`/`writeUInt16BE` (and friends), and `from`/`toString` support for `latin1` and `base64`. WebSocket gateways can now parse and emit frames, completing the Discord gateway connection.
+
+
 ## [1.3.2] - 2026-08-29
 
 ### Fixed
@@ -178,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 1. Update the version constants in the native runtime and release metadata
 2. Update `CHANGELOG.md` with new version
-3. Create git tag: `git tag v1.3.2`
+3. Create git tag: `git tag v1.3.3`
 4. Push changes: `git push && git push --tags`
 5. Create GitHub release with changelog
 
