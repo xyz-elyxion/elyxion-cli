@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.1] - 2026-08-29
+
+- Fix cross-platform TCP client compilation and release the outbound TCP support used by Discord gateway clients.
+
+
 All notable changes to Elyxion CLI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
